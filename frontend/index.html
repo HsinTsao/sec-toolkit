@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Security Toolkit - 安全工具库</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+      // 防止主题闪烁：在页面加载前立即应用保存的主题
+      (function() {
+        try {
+          const stored = localStorage.getItem('theme-storage');
+          if (stored) {
+            const { state } = JSON.parse(stored);
+            if (state?.theme) {
+              document.documentElement.classList.add(state.theme);
+              return;
+            }
+          }
+        } catch (e) {}
+        // 默认使用暗色主题
+        document.documentElement.classList.add('dark');
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

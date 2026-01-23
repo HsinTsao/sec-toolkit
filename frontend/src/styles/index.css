@@ -1,0 +1,353 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ========================================
+   主题变量定义 - 经典配色
+   ======================================== */
+
+/* 暗色主题 - 赛博朋克风格 */
+:root.dark,
+.dark {
+  --color-bg: #0a0e17;
+  --color-card: #0d1321;
+  --color-border: #1a2332;
+  --color-primary: #00d4aa;
+  --color-secondary: #7c3aed;
+  --color-accent: #f472b6;
+  --color-warning: #fbbf24;
+  --color-danger: #ef4444;
+  --color-success: #22c55e;
+  --color-text: #e2e8f0;
+  --color-muted: #64748b;
+  --color-strong: #fde68a;
+  --color-code: #67e8f9;
+  
+  /* 滚动条颜色 */
+  --scrollbar-track: #0a0e17;
+  --scrollbar-thumb: #1a2332;
+  --scrollbar-thumb-hover: #2a3342;
+}
+
+/* 亮色主题 - 经典浅色风格 */
+:root.light,
+.light {
+  --color-bg: #f8fafc;
+  --color-card: #ffffff;
+  --color-border: #e2e8f0;
+  --color-primary: #0891b2;
+  --color-secondary: #7c3aed;
+  --color-accent: #ec4899;
+  --color-warning: #f59e0b;
+  --color-danger: #dc2626;
+  --color-success: #16a34a;
+  --color-text: #1e293b;
+  --color-muted: #64748b;
+  --color-strong: #0f172a;
+  --color-code: #0e7490;
+  
+  /* 滚动条颜色 */
+  --scrollbar-track: #f1f5f9;
+  --scrollbar-thumb: #cbd5e1;
+  --scrollbar-thumb-hover: #94a3b8;
+}
+
+/* 默认使用暗色主题（如果没有指定类） */
+:root {
+  --color-bg: #0a0e17;
+  --color-card: #0d1321;
+  --color-border: #1a2332;
+  --color-primary: #00d4aa;
+  --color-secondary: #7c3aed;
+  --color-accent: #f472b6;
+  --color-warning: #fbbf24;
+  --color-danger: #ef4444;
+  --color-success: #22c55e;
+  --color-text: #e2e8f0;
+  --color-muted: #64748b;
+  --color-strong: #fde68a;
+  --color-code: #67e8f9;
+  --scrollbar-track: #0a0e17;
+  --scrollbar-thumb: #1a2332;
+  --scrollbar-thumb-hover: #2a3342;
+}
+
+/* ========================================
+   自定义滚动条
+   ======================================== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* ========================================
+   基础样式
+   ======================================== */
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  @apply font-sans;
+  min-height: 100vh;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* 链接样式 */
+a {
+  color: var(--color-primary);
+  @apply hover:underline;
+}
+
+/* 输入框样式 */
+input, textarea, select {
+  background-color: var(--color-card);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  @apply rounded-lg px-4 py-2;
+  @apply focus:outline-none;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--color-muted);
+}
+
+/* ========================================
+   按钮样式
+   ======================================== */
+.btn {
+  @apply px-4 py-2 rounded-lg font-medium transition-all duration-200;
+  @apply focus:outline-none focus:ring-2 focus:ring-offset-2;
+  --tw-ring-offset-color: var(--color-bg);
+}
+
+.btn-primary {
+  background-color: var(--color-primary);
+  color: var(--color-bg);
+  @apply hover:opacity-90;
+  --tw-ring-color: var(--color-primary);
+}
+
+.btn-secondary {
+  background-color: var(--color-secondary);
+  @apply text-white hover:opacity-90;
+  --tw-ring-color: var(--color-secondary);
+}
+
+.btn-ghost {
+  background-color: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.btn-ghost:hover {
+  background-color: var(--color-card);
+}
+
+.btn-danger {
+  background-color: var(--color-danger);
+  @apply text-white hover:opacity-90;
+  --tw-ring-color: var(--color-danger);
+}
+
+/* ========================================
+   卡片样式
+   ======================================== */
+.card {
+  background-color: var(--color-card);
+  border: 1px solid var(--color-border);
+  @apply rounded-xl p-4;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+/* 代码块样式 */
+.code-block {
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  @apply rounded-lg p-4 font-mono text-sm overflow-x-auto;
+}
+
+/* 内联代码样式 - 确保在所有容器中生效（包括表格） */
+.prose code:not(pre code) {
+  @apply px-1.5 py-0.5 rounded text-sm font-mono;
+  background-color: color-mix(in srgb, var(--color-border) 50%, transparent);
+  color: var(--color-text);
+  font-weight: normal !important;
+}
+
+.prose code:not(pre code)::before,
+.prose code:not(pre code)::after {
+  content: none !important;
+}
+
+/* ========================================
+   特效样式
+   ======================================== */
+/* 霓虹发光效果 - 仅在暗色模式下明显 */
+.neon-glow {
+  text-shadow: 0 0 10px currentColor, 0 0 20px currentColor, 0 0 30px currentColor;
+}
+
+.dark .neon-border {
+  box-shadow: 0 0 5px var(--color-primary), 0 0 10px var(--color-primary);
+}
+
+.light .neon-border {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* 工具卡片悬浮效果 */
+.tool-card {
+  @apply card transition-all duration-300;
+}
+
+.tool-card:hover {
+  border-color: var(--color-primary);
+}
+
+.dark .tool-card:hover {
+  box-shadow: 0 10px 40px rgba(0, 212, 170, 0.2);
+}
+
+.light .tool-card:hover {
+  box-shadow: 0 10px 40px rgba(8, 145, 178, 0.15);
+}
+
+/* ========================================
+   侧边栏导航
+   ======================================== */
+.nav-item {
+  @apply flex items-center gap-3 px-4 py-2 rounded-lg transition-all duration-200;
+  color: var(--color-muted);
+}
+
+.nav-item:hover {
+  color: var(--color-text);
+  background-color: var(--color-card);
+}
+
+.nav-item.active {
+  color: var(--color-primary);
+  background-color: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  border-left: 2px solid var(--color-primary);
+}
+
+/* ========================================
+   标签样式
+   ======================================== */
+.tag {
+  @apply inline-flex items-center px-2 py-1 rounded-full text-xs font-medium;
+  background-color: color-mix(in srgb, var(--color-primary) 20%, transparent);
+  color: var(--color-primary);
+}
+
+/* ========================================
+   动画
+   ======================================== */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out;
+}
+
+/* 主题切换过渡动画 */
+* {
+  transition-property: background-color, border-color, color, box-shadow;
+  transition-timing-function: ease;
+  transition-duration: 0ms;
+}
+
+html.transitioning,
+html.transitioning * {
+  transition-duration: 300ms !important;
+}
+
+/* ========================================
+   矩阵雨背景效果 (暗色模式)
+   ======================================== */
+.dark .matrix-bg {
+  background: 
+    linear-gradient(180deg, rgba(0, 212, 170, 0.03) 0%, transparent 100%),
+    radial-gradient(ellipse at 50% 0%, rgba(0, 212, 170, 0.1) 0%, transparent 50%);
+}
+
+.light .matrix-bg {
+  background: 
+    linear-gradient(180deg, rgba(8, 145, 178, 0.03) 0%, transparent 100%),
+    radial-gradient(ellipse at 50% 0%, rgba(8, 145, 178, 0.05) 0%, transparent 50%);
+}
+
+/* ========================================
+   IDE 风格状态栏
+   ======================================== */
+.status-bar {
+  @apply fixed bottom-0 left-64 right-0 h-6 z-40;
+  @apply flex items-center justify-between px-2;
+  @apply text-xs;
+  background-color: var(--color-card);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-muted);
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+
+/* 暗色模式下状态栏有轻微发光效果 */
+.dark .status-bar {
+  background: linear-gradient(180deg, var(--color-card) 0%, rgba(0, 212, 170, 0.02) 100%);
+}
+
+/* 亮色模式下状态栏有轻微阴影 */
+.light .status-bar {
+  box-shadow: 0 -1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.status-bar-item {
+  @apply flex items-center gap-1.5 px-2 py-0.5 rounded;
+  @apply transition-colors duration-200;
+}
+
+.status-bar-button {
+  @apply cursor-pointer;
+}
+
+.status-bar-button:hover {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+.status-bar-button:hover svg {
+  color: var(--color-primary);
+}
+
+.status-bar-divider {
+  @apply w-px h-3 mx-1;
+  background-color: var(--color-border);
+}
+
+/* 状态栏中的成功/危险颜色 */
+.status-bar .text-theme-success {
+  color: var(--color-success);
+}
+
+.status-bar .text-theme-danger {
+  color: var(--color-danger);
+}
