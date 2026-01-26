@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     SSL_KEYFILE: Optional[str] = None  # SSL 私钥路径
     SSL_CERTFILE: Optional[str] = None  # SSL 证书路径
     
+    # 默认 LLM 配置（可选，用户未配置时使用）
+    DEFAULT_LLM_PROVIDER: Optional[str] = None  # 如: deepseek, openai, groq
+    DEFAULT_LLM_API_KEY: Optional[str] = None  # 默认 API Key
+    DEFAULT_LLM_BASE_URL: Optional[str] = None  # 自定义 API 地址（可选）
+    DEFAULT_LLM_MODEL: Optional[str] = None  # 默认模型名称
+    
     class Config:
         env_file = ".env"
         case_sensitive = True

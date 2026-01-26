@@ -15,6 +15,7 @@ import {
   Shield,
   Radio,
   BookOpen,
+  Network,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useToolStore } from '@/stores/toolStore'
@@ -42,6 +43,7 @@ const navItems = [
       { name: '密码工具', path: '/tools/password', icon: KeyRound },
       { name: 'WAF 绕过', path: '/tools/bypass', icon: Shield },
       { name: 'OOB 探测', path: '/tools/callback', icon: Radio },
+      { name: '域名代理', path: '/tools/proxy', icon: Network },
     ],
   },
 ]

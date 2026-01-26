@@ -15,6 +15,7 @@ import NetworkTools from '@/features/tools/NetworkTools'
 import PasswordTools from '@/features/tools/PasswordTools'
 import BypassTools from '@/features/tools/BypassTools'
 import CallbackServer from '@/features/tools/CallbackServer'
+import ProxyTools from '@/features/tools/ProxyTools'
 import NotesPage from '@/features/notes/NotesPage'
 import NavigationPage from '@/features/navigation/NavigationPage'
 import BookmarksPage from '@/features/knowledge/BookmarksPage'
@@ -128,6 +129,7 @@ export default function App() {
           <Route path="password" element={<PasswordTools />} />
           <Route path="bypass" element={<BypassTools />} />
           <Route path="callback" element={<CallbackServer />} />
+          <Route path="proxy" element={<ProxyTools />} />
         </Route>
         
         {/* 旧路由重定向（兼容性） */}

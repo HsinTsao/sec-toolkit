@@ -15,6 +15,12 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
     await init_db()
+    
+    # 注册 Agent 工具
+    from .agent.tools import register_builtin_tools
+    register_builtin_tools()
+    print("🛠️ Agent 工具注册完成")
+    
     print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} 启动成功")
     yield
     # 关闭时

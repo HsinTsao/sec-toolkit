@@ -234,6 +234,8 @@ export const toolsApi = {
     api.post('/tools/network/whois', { domain }),
   ipInfo: (ip: string) =>
     api.post('/tools/network/ip/info', { ip }),
+  analyzeTarget: (target: string) =>
+    api.post('/tools/network/analyze', { target }),
 }
 
 // ==================== Bookmarks API ====================
@@ -358,6 +360,127 @@ export const llmApi = {
   
   // 聊天（流式）- 返回 URL，需要用 EventSource 处理
   getChatStreamUrl: () => '/api/llm/chat/stream',
+}
+
+// ==================== Proxy API ====================
+export interface ProxyConfig {
+  local_port: number
+  target_url: string
+  fake_host: string
+  enabled: boolean
+  preserve_path: boolean
+  ssl_verify: boolean
+  timeout: number
+  custom_headers: Record<string, string>
+  running?: boolean
+  log_count?: number
+}
+
+export interface ProxyLog {
+  timestamp: string
+  method: string
+  path: string
+  target_url: string
+  fake_host: string
+  status_code: number
+  response_time: number
+  request_headers: Record<string, string>
+  response_headers: Record<string, string>
+  error: string | null
+}
+
+export const proxyApi = {
+  // 创建代理
+  createProxy: (data: {
+    local_port: number
+    target_url: string
+    fake_host: string
+    preserve_path?: boolean
+    ssl_verify?: boolean
+    timeout?: number
+    custom_headers?: Record<string, string>
+    auto_start?: boolean
+  }) => api.post('/proxy/create', data),
+  
+  // 快速测试
+  quickTest: (data: {
+    local_port: number
+    target_url: string
+    fake_host: string
+    preserve_path?: boolean
+    ssl_verify?: boolean
+    timeout?: number
+    custom_headers?: Record<string, string>
+  }) => api.post('/proxy/quick-test', data),
+  
+  // 启动代理
+  startProxy: (port: number) =>
+    api.post(`/proxy/${port}/start`),
+  
+  // 停止代理
+  stopProxy: (port: number) =>
+    api.post(`/proxy/${port}/stop`),
+  
+  // 删除代理
+  deleteProxy: (port: number) =>
+    api.delete(`/proxy/${port}`),
+  
+  // 更新代理配置
+  updateProxy: (port: number, data: {
+    target_url?: string
+    fake_host?: string
+    preserve_path?: boolean
+    ssl_verify?: boolean
+    timeout?: number
+    custom_headers?: Record<string, string>
+  }) => api.put(`/proxy/${port}`, data),
+  
+  // 获取代理状态
+  getProxyStatus: (port: number) =>
+    api.get<{ config: ProxyConfig; running: boolean; log_count: number; local_url: string | null }>(`/proxy/${port}/status`),
+  
+  // 列出所有代理
+  listProxies: () =>
+    api.get<{ proxies: ProxyConfig[] }>('/proxy/list'),
+  
+  // 获取日志
+  getProxyLogs: (port: number, limit?: number) =>
+    api.get<{ logs: ProxyLog[]; count: number }>(`/proxy/${port}/logs`, { params: { limit } }),
+  
+  // 清除日志
+  clearProxyLogs: (port: number) =>
+    api.delete(`/proxy/${port}/logs`),
+  
+  // ========== iframe 同域代理 ==========
+  // 创建 iframe 代理
+  createIframeProxy: (data: {
+    target_url: string
+    fake_host?: string
+    rewrite_urls?: boolean
+    inject_script?: string
+    cookies?: string
+    custom_headers?: Record<string, string>
+  }) => api.post<{
+    success: boolean
+    proxy_id: string
+    iframe_src: string
+    usage: string
+    note: string
+  }>('/proxy/iframe/create', data),
+  
+  // 列出 iframe 代理
+  listIframeProxies: () =>
+    api.get<{ configs: Array<{
+      proxy_id: string
+      target_url: string
+      base_url: string
+      fake_host: string
+      rewrite_urls: boolean
+    }> }>('/proxy/iframe/list'),
+  
+  // 删除 iframe 代理
+  deleteIframeProxy: (proxyId: string) =>
+    api.delete(`/proxy/iframe/${proxyId}`),
 }
 
 // ==================== Bypass API ====================

@@ -1,6 +1,6 @@
 """API 路由"""
 from fastapi import APIRouter
-from .v1 import auth, notes, tools, bookmarks, users, bypass, callback, llm, knowledge
+from .v1 import auth, notes, tools, bookmarks, users, bypass, callback, llm, knowledge, proxy
 
 api_router = APIRouter()
 
@@ -12,6 +12,7 @@ api_router.include_router(tools.router, prefix="/tools", tags=["工具"])
 api_router.include_router(bookmarks.router, prefix="/bookmarks", tags=["书签"])
 api_router.include_router(bypass.router, prefix="/bypass", tags=["绕过"])
 api_router.include_router(callback.router, prefix="/callback", tags=["回调服务器"])
+api_router.include_router(proxy.router, prefix="/proxy", tags=["本地代理"])
 api_router.include_router(llm.router, tags=["LLM"])
 api_router.include_router(knowledge.router, tags=["知识库"])
 

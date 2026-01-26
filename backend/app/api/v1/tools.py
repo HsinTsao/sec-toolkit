@@ -416,6 +416,16 @@ async def ip_info(req: IPRequest):
     return await network.ip_info(req.ip)
 
 
+class AnalyzeRequest(BaseModel):
+    target: str
+
+
+@router.post("/network/analyze")
+async def analyze_target(req: AnalyzeRequest):
+    """综合分析目标（支持 URL、域名、IP）"""
+    return await network.analyze_target(req.target)
+
+
 # ==================== 其他工具 ====================
 
 class TimestampRequest(BaseModel):
