@@ -41,6 +41,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 5173,
+      host: true, // 监听所有网络接口，允许内网访问
       https: httpsConfig,
       proxy: {
         '/api': {

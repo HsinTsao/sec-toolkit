@@ -236,6 +236,61 @@ export const toolsApi = {
     api.post('/tools/network/ip/info', { ip }),
   analyzeTarget: (target: string) =>
     api.post('/tools/network/analyze', { target }),
+  
+  // 资源连通性测试工具
+  crawlResources: (params: {
+    url: string
+    filter_ids?: string[]
+    timeout?: number
+    concurrency?: number
+    include_types?: string[]
+    custom_headers?: Record<string, string>
+  }) => api.post('/tools/crawler/crawl', params),
+  testSingleResource: (params: {
+    url: string
+    timeout?: number
+    custom_headers?: Record<string, string>
+  }) => api.post('/tools/crawler/test-single', params),
+  batchTestUrls: (params: {
+    urls: string[]
+    timeout?: number
+    concurrency?: number
+    custom_headers?: Record<string, string>
+  }) => api.post('/tools/crawler/batch-test', params),
+  batchCrawlResources: (params: {
+    urls: string[]
+    filter_ids?: string[]
+    timeout?: number
+    concurrency?: number
+    include_types?: string[]
+    custom_headers?: Record<string, string>
+  }) => api.post('/tools/crawler/batch-crawl', params),
+  // 只提取资源（不测试）
+  extractResources: (params: {
+    urls: string[]
+    include_types?: string[]
+    custom_headers?: Record<string, string>
+    use_browser?: boolean  // 是否使用浏览器渲染（用于动态页面）
+    browser_wait_time?: number  // 浏览器等待时间（秒）
+    fetch_size?: boolean  // 是否获取文件大小
+    size_concurrency?: number  // 获取文件大小的并发数
+  }) => api.post('/tools/crawler/extract', params, {
+    // 批量提取可能需要很长时间，特别是浏览器渲染模式
+    // 每个 URL 约需 10-20 秒，所以设置 10 分钟超时
+    timeout: 600000
+  }),
+  // 测试选定的资源
+  testSelectedResources: (params: {
+    resources: Array<{ url: string; resource_type: string; source_url?: string }>
+    timeout?: number
+    concurrency?: number
+    enhanced?: boolean
+    custom_headers?: Record<string, string>
+  }) => api.post('/tools/crawler/test-selected', params, {
+    // 测试大量资源需要较长时间
+    timeout: 600000
+  }),
+  getResourceTypes: () => api.get('/tools/crawler/resource-types'),
 }
 
 // ==================== Bookmarks API ====================

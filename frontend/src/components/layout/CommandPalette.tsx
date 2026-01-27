@@ -90,7 +90,7 @@ export default function CommandPalette({ isOpen, onClose }: Props) {
   if (!isOpen) return null
   
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]">
+    <div className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh] sm:pt-[20vh] p-4">
       {/* 背景遮罩 */}
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
@@ -101,16 +101,16 @@ export default function CommandPalette({ isOpen, onClose }: Props) {
       <div className="relative w-full max-w-lg bg-theme-card border border-theme-border rounded-xl shadow-2xl overflow-hidden animate-fadeIn">
         {/* 搜索输入 */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-theme-border">
-          <Search className="w-5 h-5 text-theme-muted" />
+          <Search className="w-5 h-5 text-theme-muted flex-shrink-0" />
           <input
             type="text"
             placeholder="搜索工具..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="flex-1 bg-transparent border-none outline-none text-theme-text placeholder:text-theme-muted"
+            className="flex-1 bg-transparent border-none outline-none text-theme-text placeholder:text-theme-muted text-base"
             autoFocus
           />
-          <kbd className="px-2 py-0.5 text-xs bg-theme-bg rounded text-theme-muted">
+          <kbd className="hidden sm:block px-2 py-0.5 text-xs bg-theme-bg rounded text-theme-muted flex-shrink-0">
             ESC
           </kbd>
         </div>

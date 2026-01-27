@@ -283,6 +283,46 @@ html.transitioning * {
 }
 
 /* ========================================
+   移动端响应式优化
+   ======================================== */
+@media (max-width: 1023px) {
+  /* 移动端按钮更大的点击区域 */
+  .btn {
+    @apply min-h-[44px];
+  }
+  
+  /* 移动端输入框优化 */
+  input, textarea, select {
+    @apply text-base; /* 防止 iOS 缩放 */
+  }
+  
+  /* 移动端卡片间距优化 */
+  .card {
+    @apply p-3;
+  }
+  
+  /* 禁用移动端文本选择（特定元素） */
+  .no-select {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
+/* 触摸设备优化 */
+@media (hover: none) and (pointer: coarse) {
+  /* 触摸设备上的悬停效果替代 */
+  .nav-item:active {
+    background-color: var(--color-card);
+    color: var(--color-text);
+  }
+  
+  .tool-card:active {
+    border-color: var(--color-primary);
+  }
+}
+
+/* ========================================
    矩阵雨背景效果 (暗色模式)
    ======================================== */
 .dark .matrix-bg {
@@ -301,13 +341,20 @@ html.transitioning * {
    IDE 风格状态栏
    ======================================== */
 .status-bar {
-  @apply fixed bottom-0 left-64 right-0 h-6 z-40;
+  @apply fixed bottom-0 left-0 right-0 h-6 z-40;
   @apply flex items-center justify-between px-2;
   @apply text-xs;
   background-color: var(--color-card);
   border-top: 1px solid var(--color-border);
   color: var(--color-muted);
-  transition: background-color 0.3s ease, border-color 0.3s ease;
+  transition: background-color 0.3s ease, border-color 0.3s ease, left 0.3s ease;
+}
+
+/* 桌面端状态栏有侧边栏偏移 */
+@media (min-width: 1024px) {
+  .status-bar {
+    @apply left-64;
+  }
 }
 
 /* 暗色模式下状态栏有轻微发光效果 */

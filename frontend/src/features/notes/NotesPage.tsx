@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, Folder, Trash2, Pin, Eye, Edit3, FolderPlus, X } from 'lucide-react'
+import { Plus, Search, Folder, Trash2, Pin, Eye, Edit3, FolderPlus, X, ChevronLeft, Menu } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
@@ -39,6 +39,21 @@ export default function NotesPage() {
   const [isPreviewMode, setIsPreviewMode] = useState(false)
   const [showNewCategory, setShowNewCategory] = useState(false)
   const [newCategoryName, setNewCategoryName] = useState('')
+  
+  // 移动端状态
+  const [isMobileView, setIsMobileView] = useState(false)
+  const [mobilePanel, setMobilePanel] = useState<'categories' | 'list' | 'editor'>('list')
+  
+  // 监听窗口大小变化
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobileView(window.innerWidth < 1024) // lg breakpoint
+    }
+    
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
   
   // 获取分类
   const { data: categories = [] } = useQuery<Category[]>({
@@ -172,6 +187,9 @@ export default function NotesPage() {
     setNoteContent('')
     setNoteCategoryId(null)
     setIsPreviewMode(false)
+    if (isMobileView) {
+      setMobilePanel('list')
+    }
   }
   
   const handleEdit = (note: Note) => {
@@ -180,6 +198,9 @@ export default function NotesPage() {
     setNoteContent(note.content)
     setNoteCategoryId(note.category_id || null)
     setShowEditor(true)
+    if (isMobileView) {
+      setMobilePanel('editor')
+    }
   }
   
   const handleSave = () => {
@@ -222,18 +243,36 @@ export default function NotesPage() {
   }
   
   return (
-    <div className="h-full flex animate-fadeIn">
+    <div className="h-full flex animate-fadeIn relative overflow-hidden">
       {/* 左侧分类栏 */}
-      <div className="w-64 bg-theme-card border-r border-theme-border p-4 flex-shrink-0 flex flex-col">
+      <div className={cn(
+        "bg-theme-card border-r border-theme-border p-3 lg:p-4 flex-shrink-0 flex flex-col",
+        // 移动端样式
+        isMobileView 
+          ? "fixed inset-y-0 left-0 w-64 z-50 transition-transform duration-300"
+          : "w-48 lg:w-64",
+        isMobileView && mobilePanel !== 'categories' && "-translate-x-full"
+      )}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">笔记</h2>
-          <button
-            onClick={() => setShowNewCategory(!showNewCategory)}
-            className="p-1.5 rounded-lg hover:bg-theme-bg text-theme-muted hover:text-theme-primary transition-colors"
-            title="新建分类"
-          >
-            <FolderPlus className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowNewCategory(!showNewCategory)}
+              className="p-1.5 rounded-lg hover:bg-theme-bg text-theme-muted hover:text-theme-primary transition-colors"
+              title="新建分类"
+            >
+              <FolderPlus className="w-4 h-4" />
+            </button>
+            {/* 移动端关闭按钮 */}
+            {isMobileView && (
+              <button
+                onClick={() => setMobilePanel('list')}
+                className="p-1.5 rounded-lg hover:bg-theme-bg text-theme-muted hover:text-theme-text"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         </div>
         
         {/* 新建分类输入框 */}
@@ -334,10 +373,41 @@ export default function NotesPage() {
         </div>
       </div>
       
+      {/* 移动端遮罩层 */}
+      {isMobileView && mobilePanel === 'categories' && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40"
+          onClick={() => setMobilePanel('list')}
+        />
+      )}
+      
       {/* 中间笔记列表 */}
-      <div className="w-80 border-r border-theme-border flex-shrink-0 flex flex-col">
+      <div className={cn(
+        "border-r border-theme-border flex-shrink-0 flex flex-col",
+        // 移动端样式
+        isMobileView 
+          ? cn(
+              "w-full transition-transform duration-300",
+              mobilePanel === 'editor' && "-translate-x-full absolute inset-0"
+            )
+          : "w-64 lg:w-80"
+      )}>
         {/* 搜索和新建 */}
-        <div className="p-4 border-b border-theme-border space-y-3">
+        <div className="p-3 lg:p-4 border-b border-theme-border space-y-3">
+          {/* 移动端顶部导航 */}
+          {isMobileView && (
+            <div className="flex items-center gap-2 -mt-1 mb-2">
+              <button
+                onClick={() => setMobilePanel('categories')}
+                className="p-1.5 -ml-1.5 rounded-lg hover:bg-theme-bg text-theme-muted"
+              >
+                <Menu className="w-5 h-5" />
+              </button>
+              <span className="text-sm font-medium text-theme-text">
+                {selectedCategory ? categories.find(c => c.id === selectedCategory)?.name || '笔记' : '全部笔记'}
+              </span>
+            </div>
+          )}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-theme-muted" />
             <input
@@ -352,6 +422,7 @@ export default function NotesPage() {
             onClick={() => {
               resetEditor()
               setShowEditor(true)
+              if (isMobileView) setMobilePanel('editor')
             }}
             className="w-full btn btn-primary text-sm flex items-center justify-center"
           >
@@ -421,26 +492,45 @@ export default function NotesPage() {
       </div>
       
       {/* 右侧编辑区 */}
-      <div className="flex-1 flex flex-col">
+      <div className={cn(
+        "flex-1 flex flex-col",
+        // 移动端样式
+        isMobileView && cn(
+          "absolute inset-0 bg-theme-bg transition-transform duration-300",
+          mobilePanel !== 'editor' && "translate-x-full"
+        )
+      )}>
         {showEditor ? (
           <>
             {/* 工具栏 */}
-            <div className="flex items-center justify-between p-4 border-b border-theme-border gap-4">
-              <div className="flex-1 flex items-center gap-3">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between p-3 lg:p-4 border-b border-theme-border gap-3 lg:gap-4">
+              <div className="flex-1 flex items-center gap-2 lg:gap-3">
+                {/* 移动端返回按钮 */}
+                {isMobileView && (
+                  <button
+                    onClick={resetEditor}
+                    className="p-1.5 -ml-1.5 rounded-lg hover:bg-theme-bg text-theme-muted"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                )}
                 <input
                   type="text"
                   placeholder="笔记标题"
                   value={noteTitle}
                   onChange={(e) => setNoteTitle(e.target.value)}
-                  className="text-xl font-semibold bg-transparent border-none outline-none flex-1 min-w-0"
+                  className="text-lg lg:text-xl font-semibold bg-transparent border-none outline-none flex-1 min-w-0"
                 />
-                {/* 分类选择 - 编辑已有笔记时自动保存 */}
+              </div>
+              
+              {/* 移动端：分类和工具按钮另起一行 */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* 分类选择 */}
                 <select
                   value={noteCategoryId || ''}
                   onChange={(e) => {
                     const newCategoryId = e.target.value || null
                     setNoteCategoryId(newCategoryId)
-                    // 如果是编辑已有笔记，静默保存分类变更（不关闭编辑器）
                     if (editingNote) {
                       silentUpdateMutation.mutate({
                         id: editingNote.id,
@@ -448,40 +538,39 @@ export default function NotesPage() {
                       })
                     }
                   }}
-                  className="px-3 py-1.5 text-sm bg-theme-bg border border-theme-border rounded-lg text-theme-text min-w-[120px]"
+                  className="px-2 lg:px-3 py-1.5 text-sm bg-theme-bg border border-theme-border rounded-lg text-theme-text min-w-[100px] lg:min-w-[120px]"
                 >
                   <option value="">无分类</option>
                   {categories.map((cat) => (
                     <option key={cat.id} value={cat.id}>{cat.name}</option>
                   ))}
                 </select>
-              </div>
-              <div className="flex items-center gap-2">
+                
                 {/* 编辑/预览切换 */}
                 <div className="flex items-center bg-theme-bg rounded-lg p-1">
                   <button
                     onClick={() => setIsPreviewMode(false)}
                     className={cn(
-                      'px-3 py-1.5 rounded-md text-sm flex items-center gap-1.5 transition-colors',
+                      'px-2 lg:px-3 py-1.5 rounded-md text-sm flex items-center gap-1 lg:gap-1.5 transition-colors',
                       !isPreviewMode
                         ? 'bg-theme-primary text-theme-bg'
                         : 'text-theme-muted hover:text-theme-text'
                     )}
                   >
                     <Edit3 className="w-3.5 h-3.5" />
-                    编辑
+                    <span className="hidden sm:inline">编辑</span>
                   </button>
                   <button
                     onClick={() => setIsPreviewMode(true)}
                     className={cn(
-                      'px-3 py-1.5 rounded-md text-sm flex items-center gap-1.5 transition-colors',
+                      'px-2 lg:px-3 py-1.5 rounded-md text-sm flex items-center gap-1 lg:gap-1.5 transition-colors',
                       isPreviewMode
                         ? 'bg-theme-primary text-theme-bg'
                         : 'text-theme-muted hover:text-theme-text'
                     )}
                   >
                     <Eye className="w-3.5 h-3.5" />
-                    预览
+                    <span className="hidden sm:inline">预览</span>
                   </button>
                 </div>
                 
@@ -511,7 +600,7 @@ export default function NotesPage() {
                     </button>
                   </>
                 )}
-                <button onClick={resetEditor} className="btn btn-ghost text-sm">
+                <button onClick={resetEditor} className="btn btn-ghost text-sm hidden lg:inline-flex">
                   取消
                 </button>
                 <button

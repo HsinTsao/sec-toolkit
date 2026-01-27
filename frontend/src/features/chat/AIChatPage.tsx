@@ -20,6 +20,8 @@ import {
   Link2,
   FileUp,
   ExternalLink,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react'
 import { useLLMStore, type ChatMessage } from '@/stores/llmStore'
 import { cn } from '@/lib/utils'
@@ -57,8 +59,25 @@ export default function AIChatPage() {
   const [useKnowledge, setUseKnowledge] = useState(true)
   const [knowledgeSources, setKnowledgeSources] = useState<string[]>(['note', 'bookmark', 'file'])
   const [lastSources, setLastSources] = useState<RAGSource[]>([])
+  const [showChatSidebar, setShowChatSidebar] = useState(false) // 移动端会话列表
+  const [isMobileView, setIsMobileView] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  
+  // 监听窗口大小变化
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 768 // md breakpoint
+      setIsMobileView(mobile)
+      if (!mobile) {
+        setShowChatSidebar(false) // 桌面端关闭移动端抽屉
+      }
+    }
+    
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
 
 // RAG 来源类型
 interface RAGSource {
@@ -298,17 +317,41 @@ interface RAGSource {
   
   // 计算高度：视口高度 - header(64px) - statusbar(24px) - padding(24px上 + 48px下)
   return (
-    <div className="flex animate-fadeIn -m-6 -mb-12" style={{ height: 'calc(100vh - 64px - 24px)' }}>
-      {/* 左侧会话列表 - 固定高度独立滚动 */}
-      <div className="w-64 bg-theme-card border-r border-theme-border flex flex-col flex-shrink-0">
-        <div className="p-4 border-b border-theme-border">
+    <div className="flex animate-fadeIn -m-4 lg:-m-6 -mb-12" style={{ height: 'calc(100vh - 56px - 24px)', minHeight: 0 }}>
+      {/* 移动端遮罩层 */}
+      {isMobileView && showChatSidebar && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          onClick={() => setShowChatSidebar(false)}
+        />
+      )}
+      
+      {/* 左侧会话列表 - 移动端抽屉式，桌面端固定显示 */}
+      <div className={cn(
+        "bg-theme-card border-r border-theme-border flex flex-col flex-shrink-0 z-50",
+        // 移动端样式
+        isMobileView 
+          ? "fixed inset-y-0 left-0 w-64 transition-transform duration-300"
+          : "w-56 lg:w-64 relative",
+        isMobileView && !showChatSidebar && "-translate-x-full"
+      )}>
+        <div className="p-3 lg:p-4 border-b border-theme-border flex items-center gap-2">
           <button
             onClick={() => createSession()}
-            className="w-full btn btn-primary flex items-center justify-center gap-2"
+            className="flex-1 btn btn-primary flex items-center justify-center gap-2 text-sm"
           >
             <Plus className="w-4 h-4" />
             新对话
           </button>
+          {/* 移动端关闭按钮 */}
+          {isMobileView && (
+            <button
+              onClick={() => setShowChatSidebar(false)}
+              className="p-2 rounded-lg hover:bg-theme-bg text-theme-muted hover:text-theme-text"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
         
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
@@ -320,7 +363,10 @@ interface RAGSource {
             sessions.map(session => (
               <button
                 key={session.id}
-                onClick={() => setCurrentSession(session.id)}
+                onClick={() => {
+                  setCurrentSession(session.id)
+                  if (isMobileView) setShowChatSidebar(false)
+                }}
                 className={cn(
                   'w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors group',
                   currentSessionId === session.id
@@ -347,7 +393,7 @@ interface RAGSource {
         </div>
         
         {/* 设置按钮 */}
-        <div className="p-4 border-t border-theme-border">
+        <div className="p-3 lg:p-4 border-t border-theme-border">
           <button
             onClick={() => setShowSettings(true)}
             className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-theme-muted hover:text-theme-text hover:bg-theme-bg transition-colors"
@@ -357,7 +403,7 @@ interface RAGSource {
             {configLoading ? (
               <Loader2 className="ml-auto w-4 h-4 animate-spin" />
             ) : config ? (
-              <span className="ml-auto text-xs bg-theme-bg px-2 py-0.5 rounded">
+              <span className="ml-auto text-xs bg-theme-bg px-2 py-0.5 rounded hidden sm:block">
                 {currentProvider?.icon} {currentProvider?.name}
               </span>
             ) : (
@@ -396,8 +442,18 @@ interface RAGSource {
             </div>
             
             {/* 输入区域 */}
-            <div className="p-4 border-t border-theme-border">
+            <div className="p-3 lg:p-4 border-t border-theme-border">
               <div className="flex gap-2 max-w-4xl mx-auto">
+                {/* 移动端显示会话列表切换按钮 */}
+                {isMobileView && (
+                  <button
+                    onClick={() => setShowChatSidebar(true)}
+                    className="btn btn-ghost p-2 self-end flex-shrink-0"
+                    title="会话列表"
+                  >
+                    <PanelLeftOpen className="w-5 h-5" />
+                  </button>
+                )}
                 <textarea
                   ref={inputRef}
                   value={input}
@@ -412,14 +468,14 @@ interface RAGSource {
                       sendMessage()
                     }
                   }}
-                  placeholder="输入消息... (Enter 发送, Shift+Enter 换行)"
-                  className="flex-1 resize-none min-h-[44px] max-h-[200px]"
+                  placeholder={isMobileView ? "输入消息..." : "输入消息... (Enter 发送, Shift+Enter 换行)"}
+                  className="flex-1 resize-none min-h-[44px] max-h-[200px] text-sm lg:text-base"
                   rows={1}
                 />
                 <button
                   onClick={sendMessage}
                   disabled={isLoading || !input.trim()}
-                  className="btn btn-primary px-4 self-end"
+                  className="btn btn-primary px-3 lg:px-4 self-end flex-shrink-0"
                 >
                   {isLoading ? (
                     <Loader2 className="w-5 h-5 animate-spin" />
@@ -429,20 +485,20 @@ interface RAGSource {
                 </button>
               </div>
               {/* 知识库设置和模型信息 */}
-              <div className="flex items-center justify-between max-w-4xl mx-auto mt-2 text-xs">
+              <div className="flex items-center justify-between max-w-4xl mx-auto mt-2 text-xs flex-wrap gap-2">
                 {/* 知识库开关 */}
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 lg:gap-3 flex-wrap">
                   <button
                     onClick={() => setUseKnowledge(!useKnowledge)}
                     className={cn(
-                      'flex items-center gap-1.5 px-2 py-1 rounded transition-colors',
+                      'flex items-center gap-1 lg:gap-1.5 px-2 py-1 rounded transition-colors',
                       useKnowledge 
                         ? 'bg-theme-primary/20 text-theme-primary' 
                         : 'text-theme-muted hover:text-theme-text'
                     )}
                   >
                     <BookOpen className="w-3.5 h-3.5" />
-                    知识库 {useKnowledge ? 'ON' : 'OFF'}
+                    <span className="hidden sm:inline">知识库</span> {useKnowledge ? 'ON' : 'OFF'}
                   </button>
                   
                   {useKnowledge && (
@@ -484,8 +540,8 @@ interface RAGSource {
                 </div>
                 
                 {/* 模型信息 */}
-                <div className="text-theme-muted">
-                  {currentProvider?.icon} {config?.model || '未配置'}
+                <div className="text-theme-muted truncate">
+                  {currentProvider?.icon} <span className="hidden sm:inline">{config?.model || '未配置'}</span>
                 </div>
               </div>
               
@@ -519,17 +575,17 @@ interface RAGSource {
           </>
         ) : (
           // 空状态 - 欢迎页面
-          <div className="flex-1 flex flex-col items-center justify-center p-8">
-            <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-theme-primary to-theme-secondary flex items-center justify-center mb-6">
-              <Sparkles className="w-10 h-10 text-theme-bg" />
+          <div className="flex-1 flex flex-col items-center justify-center p-4 lg:p-8 overflow-auto">
+            <div className="w-16 h-16 lg:w-20 lg:h-20 rounded-2xl bg-gradient-to-br from-theme-primary to-theme-secondary flex items-center justify-center mb-4 lg:mb-6">
+              <Sparkles className="w-8 h-8 lg:w-10 lg:h-10 text-theme-bg" />
             </div>
-            <h1 className="text-3xl font-bold text-theme-text mb-2">AI 安全助手</h1>
-            <p className="text-theme-muted mb-8 text-center max-w-md">
+            <h1 className="text-2xl lg:text-3xl font-bold text-theme-text mb-2 text-center">AI 安全助手</h1>
+            <p className="text-theme-muted mb-6 lg:mb-8 text-center max-w-md text-sm lg:text-base">
               专业的 Web 安全分析助手，可帮助分析请求、识别漏洞、生成测试 payload
             </p>
             
             {!config && (
-              <div className="mb-6 p-4 bg-theme-warning/10 border border-theme-warning/30 rounded-lg text-center">
+              <div className="mb-4 lg:mb-6 p-3 lg:p-4 bg-theme-warning/10 border border-theme-warning/30 rounded-lg text-center">
                 <p className="text-theme-warning text-sm flex items-center justify-center gap-2">
                   <AlertCircle className="w-4 h-4" />
                   请先配置 API Key
@@ -543,7 +599,7 @@ interface RAGSource {
               </div>
             )}
             
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-w-2xl">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 lg:gap-3 max-w-2xl w-full">
               {[
                 '帮我分析这段代码的安全问题',
                 '生成 SQL 注入测试 payload',
@@ -558,7 +614,7 @@ interface RAGSource {
                     setInput(prompt)
                     inputRef.current?.focus()
                   }}
-                  className="p-3 text-sm text-left rounded-lg bg-theme-card border border-theme-border hover:border-theme-primary/50 transition-colors"
+                  className="p-2.5 lg:p-3 text-sm text-left rounded-lg bg-theme-card border border-theme-border hover:border-theme-primary/50 transition-colors"
                 >
                   {prompt}
                 </button>
@@ -566,12 +622,12 @@ interface RAGSource {
             </div>
             <button
               onClick={() => createSession()}
-              className="mt-8 btn btn-primary flex items-center gap-2"
+              className="mt-6 lg:mt-8 btn btn-primary flex items-center gap-2"
             >
               <Plus className="w-4 h-4" />
               开始新对话
             </button>
-            <p className="mt-6 text-xs text-theme-muted/60 text-center max-w-sm">
+            <p className="mt-4 lg:mt-6 text-xs text-theme-muted/60 text-center max-w-sm px-4">
               💡 对话记录仅存储在浏览器本地，登出后将清除。如需永久保存 AI 回复，可点击消息旁的 <FileText className="w-3 h-3 inline" /> 图标转存到笔记。
             </p>
           </div>

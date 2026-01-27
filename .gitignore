@@ -11,9 +11,10 @@ build/
 *.egg-info/
 
 # 数据
-data/*.db
-backend/data/*.db
-backend/data/*.db-*
+data/
+backend/data/
+*.db
+*.db-*
 *.sqlite
 *.sqlite3
 
@@ -44,6 +45,11 @@ certs/
 *.key
 *.crt
 *.csr
+
+# 部署包
+deploy/*.tar
+deploy/*.tar.gz
+deploy/*.zip
 
 # 其他
 *.bak

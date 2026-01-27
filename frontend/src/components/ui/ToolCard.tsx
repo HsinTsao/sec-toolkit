@@ -125,6 +125,7 @@ export function ToolOutput({ label, value, className }: ToolOutputProps) {
 interface ToolButtonProps {
   onClick: () => void
   loading?: boolean
+  disabled?: boolean
   children: React.ReactNode
   variant?: 'primary' | 'secondary' | 'ghost'
   className?: string
@@ -133,6 +134,7 @@ interface ToolButtonProps {
 export function ToolButton({
   onClick,
   loading,
+  disabled,
   children,
   variant = 'primary',
   className,
@@ -146,7 +148,7 @@ export function ToolButton({
   return (
     <button
       onClick={onClick}
-      disabled={loading}
+      disabled={loading || disabled}
       className={cn('btn', variants[variant], 'disabled:opacity-50', className)}
     >
       {loading ? (

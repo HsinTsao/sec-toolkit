@@ -9,7 +9,7 @@ from ...database import get_db
 from ...models import User, Favorite, ToolHistory
 from ...schemas import FavoriteCreate, FavoriteResponse, ToolHistoryCreate, ToolHistoryResponse
 from ...api.deps import get_current_user, get_optional_user
-from ...modules import encoding, crypto, hash_tools, jwt_tool, network, format_tools
+from ...modules import encoding, crypto, hash_tools, jwt_tool, network, format_tools, crawler
 
 router = APIRouter()
 
@@ -456,4 +456,201 @@ async def base_convert(req: BaseConvertRequest):
 async def generate_uuid():
     """生成 UUID"""
     return format_tools.generate_uuid()
+
+
+# ==================== 资源连通性测试工具 ====================
+
+class CrawlResourcesRequest(BaseModel):
+    """爬取并测试资源请求"""
+    url: str
+    filter_ids: Optional[List[str]] = None
+    timeout: int = 10
+    concurrency: int = 10
+    include_types: Optional[List[str]] = None
+    custom_headers: Optional[dict] = None
+
+
+class TestSingleResourceRequest(BaseModel):
+    """测试单个资源请求"""
+    url: str
+    timeout: int = 10
+    custom_headers: Optional[dict] = None
+
+
+class BatchTestUrlsRequest(BaseModel):
+    """批量测试 URL 请求"""
+    urls: List[str]
+    timeout: int = 10
+    concurrency: int = 10
+    custom_headers: Optional[dict] = None
+
+
+class BatchCrawlRequest(BaseModel):
+    """批量爬取网站请求"""
+    urls: List[str]
+    filter_ids: Optional[List[str]] = None
+    timeout: int = 10
+    concurrency: int = 10
+    include_types: Optional[List[str]] = None
+    custom_headers: Optional[dict] = None
+
+
+class ExtractResourcesRequest(BaseModel):
+    """只提取资源请求（不测试）"""
+    urls: List[str]
+    include_types: Optional[List[str]] = None
+    custom_headers: Optional[dict] = None
+    use_browser: bool = False  # 是否使用浏览器渲染（用于动态页面）
+    browser_wait_time: int = 3  # 浏览器等待时间（秒）
+    fetch_size: bool = False  # 是否获取文件大小
+    size_concurrency: int = 10  # 获取文件大小的并发数
+
+
+class TestSelectedResourcesRequest(BaseModel):
+    """测试选定资源请求"""
+    resources: List[dict]  # 每个资源需要包含 url 和 resource_type
+    timeout: int = 10
+    concurrency: int = 10
+    enhanced: bool = False  # 是否启用增强测试
+    custom_headers: Optional[dict] = None
+
+
+@router.post("/crawler/extract")
+async def extract_resources(req: ExtractResourcesRequest):
+    """
+    只提取网页资源，不进行测试
+    
+    用于先查看资源列表，再手动选择要测试的资源
+    
+    - urls: 目标网页 URL 列表
+    - include_types: 只包含特定类型的资源
+    - custom_headers: 自定义请求头
+    - use_browser: 是否使用浏览器渲染（用于动态加载的页面，如 SPA）
+    - browser_wait_time: 浏览器等待 JavaScript 执行的时间（秒）
+    - fetch_size: 是否获取文件大小
+    - size_concurrency: 获取文件大小的并发数
+    """
+    return await crawler.batch_extract_resources(
+        target_urls=req.urls,
+        include_types=req.include_types,
+        custom_headers=req.custom_headers,
+        use_browser=req.use_browser,
+        browser_wait_time=req.browser_wait_time,
+        fetch_size=req.fetch_size,
+        size_concurrency=req.size_concurrency
+    )
+
+
+@router.post("/crawler/test-selected")
+async def test_selected_resources(req: TestSelectedResourcesRequest):
+    """
+    测试选定的资源列表
+    
+    - resources: 资源列表，每个资源需要包含 url 和 resource_type
+    - timeout: 单个请求超时时间（秒）
+    - concurrency: 并发请求数
+    - enhanced: 是否启用增强测试（会下载部分内容验证文件真实性）
+    - custom_headers: 自定义请求头
+    
+    增强测试会检查：
+    - Content-Type 是否与资源类型匹配
+    - Content-Length 是否合理
+    - 文件头（Magic Bytes）是否正确
+    - 是否返回了 HTML 错误页面
+    """
+    return await crawler.test_selected_resources(
+        resources=req.resources,
+        timeout=req.timeout,
+        concurrency=req.concurrency,
+        enhanced=req.enhanced,
+        custom_headers=req.custom_headers
+    )
+
+
+@router.post("/crawler/crawl")
+async def crawl_and_test(req: CrawlResourcesRequest):
+    """
+    爬取网页并测试所有资源的连通性
+    
+    - url: 目标网页 URL
+    - filter_ids: 过滤 ID 列表，只返回 URL 中包含这些 ID 的资源
+    - timeout: 单个请求超时时间（秒）
+    - concurrency: 并发请求数
+    - include_types: 只包含特定类型的资源 (image, video, audio, script, stylesheet, font, document, other)
+    - custom_headers: 自定义请求头
+    """
+    return await crawler.crawl_and_test_resources(
+        target_url=req.url,
+        filter_ids=req.filter_ids,
+        timeout=req.timeout,
+        concurrency=req.concurrency,
+        include_types=req.include_types,
+        custom_headers=req.custom_headers
+    )
+
+
+@router.post("/crawler/test-single")
+async def test_single_resource(req: TestSingleResourceRequest):
+    """测试单个资源的可访问性"""
+    return await crawler.test_single_resource(
+        url=req.url,
+        timeout=req.timeout,
+        custom_headers=req.custom_headers
+    )
+
+
+@router.post("/crawler/batch-test")
+async def batch_test_urls(req: BatchTestUrlsRequest):
+    """批量测试 URL 列表的可访问性"""
+    return await crawler.batch_test_urls(
+        urls=req.urls,
+        timeout=req.timeout,
+        concurrency=req.concurrency,
+        custom_headers=req.custom_headers
+    )
+
+
+@router.post("/crawler/batch-crawl")
+async def batch_crawl_and_test(req: BatchCrawlRequest):
+    """
+    批量爬取多个网站并测试所有资源的连通性
+    
+    - urls: 目标网页 URL 列表
+    - filter_ids: 过滤 ID 列表，用于筛选资源并统计匹配情况
+    - timeout: 单个请求超时时间（秒）
+    - concurrency: 并发请求数
+    - include_types: 只包含特定类型的资源
+    - custom_headers: 自定义请求头
+    
+    返回结果包含：
+    - sites: 每个网站的详细结果
+    - all_resources: 所有资源汇总
+    - filtered_resources: ID 过滤后的资源
+    - filter_summary: 每个 ID 的匹配统计（是否找到、数量、可访问性）
+    """
+    return await crawler.batch_crawl_and_test(
+        target_urls=req.urls,
+        filter_ids=req.filter_ids,
+        timeout=req.timeout,
+        concurrency=req.concurrency,
+        include_types=req.include_types,
+        custom_headers=req.custom_headers
+    )
+
+
+@router.get("/crawler/resource-types")
+async def get_resource_types():
+    """获取支持的资源类型列表"""
+    return {
+        "types": [
+            {"value": "image", "label": "图片"},
+            {"value": "video", "label": "视频"},
+            {"value": "audio", "label": "音频"},
+            {"value": "script", "label": "脚本"},
+            {"value": "stylesheet", "label": "样式表"},
+            {"value": "font", "label": "字体"},
+            {"value": "document", "label": "文档"},
+            {"value": "other", "label": "其他"},
+        ]
+    }
 
