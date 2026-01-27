@@ -25,7 +25,7 @@ import KnowledgeBasePage from '@/features/knowledge/KnowledgeBasePage'
 // 应用初始化 Hook
 function useAppInit() {
   const [isInitialized, setIsInitialized] = useState(false)
-  const { token, setAuth, logout } = useAuthStore()
+  const { token, setAuth } = useAuthStore()
   
   useEffect(() => {
     const initAuth = async () => {

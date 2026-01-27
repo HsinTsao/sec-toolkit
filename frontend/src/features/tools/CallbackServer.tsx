@@ -111,7 +111,7 @@ export default function CallbackServer() {
     enable_variables: false,
   })
   
-  const pollingRef = useRef<NodeJS.Timeout | null>(null)
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const lastPollTime = useRef<string | null>(null)
 
   // 获取服务器基础 URL

@@ -47,9 +47,12 @@ fi
 # 确保输出目录存在
 mkdir -p "$OUTPUT_DIR"
 
+# 目标平台 (服务器通常是 x86_64)
+PLATFORM="linux/amd64"
+
 # 构建后端镜像
-print_info "构建后端镜像..."
-docker build -t "${BACKEND_IMAGE}" ./backend
+print_info "构建后端镜像 (平台: ${PLATFORM})..."
+docker build --platform "${PLATFORM}" -t "${BACKEND_IMAGE}" ./backend
 if [ $? -eq 0 ]; then
     print_success "后端镜像构建完成"
 else
@@ -58,8 +61,8 @@ else
 fi
 
 # 构建前端镜像
-print_info "构建前端镜像..."
-docker build -t "${FRONTEND_IMAGE}" ./frontend
+print_info "构建前端镜像 (平台: ${PLATFORM})..."
+docker build --platform "${PLATFORM}" -t "${FRONTEND_IMAGE}" ./frontend
 if [ $? -eq 0 ]; then
     print_success "前端镜像构建完成"
 else

@@ -3,7 +3,7 @@ import { ToolCard, ToolButton } from '@/components/ui/ToolCard'
 import { proxyApi, toolsApi, ProxyConfig, ProxyLog } from '@/lib/api'
 import { useToolStore } from '@/stores/toolStore'
 import toast from 'react-hot-toast'
-import { Play, Square, Trash2, RefreshCw, Copy, ExternalLink, ChevronDown, ChevronUp, Plus, Frame, Code, Globe, Server, Shield, Zap } from 'lucide-react'
+import { Play, Square, Trash2, RefreshCw, Copy, ExternalLink, ChevronDown, ChevronUp, Frame, Code, Globe, Server, Shield, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 // iframe 代理配置类型
@@ -406,7 +406,7 @@ export default function ProxyTools() {
       </div>
       
       {/* 创建代理 */}
-      <ToolCard title="创建代理" icon={<Plus className="w-5 h-5" />} toolKey="proxy-create">
+      <ToolCard title="创建代理" toolKey="proxy-create">
         <div className="space-y-5">
           {/* 核心配置 */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -525,7 +525,6 @@ export default function ProxyTools() {
       {/* 代理列表 */}
       <ToolCard 
         title={`运行中的代理 (${proxies.filter(p => p.running).length}/${proxies.length})`} 
-        icon={<Server className="w-5 h-5" />}
         toolKey="proxy-list"
       >
         <div className="space-y-4">
@@ -762,7 +761,7 @@ export default function ProxyTools() {
       )}
       
       {/* iframe 同域代理 */}
-      <ToolCard title="iframe 同域代理" icon={<Frame className="w-5 h-5" />} toolKey="iframe-proxy">
+      <ToolCard title="iframe 同域代理" toolKey="iframe-proxy">
         <div className="space-y-5">
           <div className="bg-gradient-to-r from-violet-500/10 to-purple-500/10 border border-violet-500/20 rounded-xl p-4">
             <h4 className="font-semibold text-theme-text mb-2 flex items-center gap-2">
@@ -959,7 +958,7 @@ export default function ProxyTools() {
       </ToolCard>
       
       {/* Hosts 文件助手 */}
-      <ToolCard title="Hosts 文件助手" icon={<Shield className="w-5 h-5" />} toolKey="hosts-helper">
+      <ToolCard title="Hosts 文件助手" toolKey="hosts-helper">
         <div className="space-y-5">
           <div className="bg-gradient-to-r from-emerald-500/10 to-teal-500/10 border border-emerald-500/20 rounded-xl p-4">
             <h4 className="font-semibold text-theme-text mb-2">最强方案：修改 Hosts 文件</h4>

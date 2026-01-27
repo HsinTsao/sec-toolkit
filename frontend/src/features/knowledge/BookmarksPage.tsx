@@ -149,7 +149,7 @@ export default function BookmarksPage() {
   }
   
   // 防抖定时器
-  const [debounceTimer, setDebounceTimer] = useState<NodeJS.Timeout | null>(null)
+  const [debounceTimer, setDebounceTimer] = useState<ReturnType<typeof setTimeout> | null>(null)
   
   const handleUrlChange = (url: string) => {
     setFormUrl(url)
@@ -219,7 +219,7 @@ export default function BookmarksPage() {
   })
   
   // 获取实际存在的分类
-  const existingCategories = ['全部', ...new Set(bookmarks.map(b => b.category).filter(Boolean))]
+  const existingCategories: string[] = ['全部', ...new Set(bookmarks.map(b => b.category).filter((c): c is string => Boolean(c)))]
   const allCategories = [...new Set([...existingCategories, ...defaultCategories])]
   
   // 获取网站图标

@@ -55,7 +55,7 @@ const SOURCE_TYPES = [
 
 export default function KnowledgeBasePage() {
   const [items, setItems] = useState<KnowledgeItem[]>([])
-  const [files, setFiles] = useState<UploadedFile[]>([])
+  const [, setFiles] = useState<UploadedFile[]>([])
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [sourceFilter, setSourceFilter] = useState('all')

@@ -20,7 +20,6 @@ import {
   Link2,
   FileUp,
   ExternalLink,
-  PanelLeftClose,
   PanelLeftOpen,
 } from 'lucide-react'
 import { useLLMStore, type ChatMessage } from '@/stores/llmStore'
