@@ -1,5 +1,8 @@
 # Security Toolkit 生产部署配置
 # 使用 export-image.sh 打包的镜像
+#
+# 配置方式: 编辑 .env 文件，所有配置会自动传递给后端容器
+# 新增配置无需修改此文件，只需在 .env 中添加即可
 
 version: '3.8'
 
@@ -13,11 +16,8 @@ services:
       - "8000:8000"
     volumes:
       - toolkit-data:/app/data
-    environment:
-      - DATABASE_URL=sqlite+aiosqlite:///./data/toolkit.db
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-please-change-this-key}
-      - DEBUG=false
-      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost","https://localhost"]}
+    env_file:
+      - .env
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s

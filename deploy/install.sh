@@ -60,16 +60,57 @@ if [ ! -f ".env" ]; then
     # 生成随机 JWT 密钥
     JWT_SECRET=$(openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | base64 | tr -d '\n/+=' | head -c 64)
     
-    cat > .env << EOF
-# Security Toolkit 配置
-# JWT 密钥 (已自动生成)
-JWT_SECRET_KEY=${JWT_SECRET}
+    cat > .env << 'ENVEOF'
+# ╔═══════════════════════════════════════════════════════════════╗
+# ║           Security Toolkit 配置文件                            ║
+# ║  修改后运行: docker compose -f docker-compose.prod.yml restart ║
+# ╚═══════════════════════════════════════════════════════════════╝
 
-# CORS 配置 (如需添加域名，取消注释并修改)
-# CORS_ORIGINS=["http://your-domain.com","https://your-domain.com"]
-EOF
+# ==================== 基础配置 ====================
+
+# 数据库路径 (一般无需修改)
+DATABASE_URL=sqlite+aiosqlite:///./data/toolkit.db
+
+# JWT 密钥 (已自动生成，请勿泄露)
+ENVEOF
+    echo "JWT_SECRET_KEY=${JWT_SECRET}" >> .env
+    cat >> .env << 'ENVEOF'
+
+# 调试模式 (生产环境保持 false)
+DEBUG=false
+
+# CORS 允许的源 (JSON 数组格式)
+# 如需外部访问，添加你的域名，例如:
+# CORS_ORIGINS=["http://your-domain.com","https://your-domain.com","http://localhost"]
+CORS_ORIGINS=["http://localhost","https://localhost"]
+
+# ==================== LLM 配置 (可选) ====================
+# 配置后，用户未设置个人 LLM 时会使用这些默认配置
+# 支持的提供商: openai, groq, deepseek, siliconflow, zhipu, ollama, custom
+
+# 默认 LLM 提供商
+# DEFAULT_LLM_PROVIDER=deepseek
+
+# 默认 API Key (必填才能启用)
+# DEFAULT_LLM_API_KEY=sk-xxxxxxxx
+
+# 自定义 API 地址 (可选)
+# DEFAULT_LLM_BASE_URL=https://api.deepseek.com/v1
+
+# 默认模型名称 (可选)
+# DEFAULT_LLM_MODEL=deepseek-chat
+
+# ==================== 未来扩展配置 ====================
+# 后端新增的配置项可以直接在此添加，无需修改其他文件
+# 配置名称参考 env.example 或后端 config.py
+
+ENVEOF
     
-    print_success "配置文件已生成"
+    print_success "配置文件已生成: .env"
+    echo ""
+    print_info "配置说明:"
+    echo "  - 编辑 .env 文件修改配置"
+    echo "  - 修改后执行: docker compose -f docker-compose.prod.yml restart"
 else
     print_info "配置文件已存在，跳过"
 fi
