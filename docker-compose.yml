@@ -3,8 +3,6 @@
 # 配置方式: 复制 env.example 为 .env 并编辑
 # 所有 .env 中的配置会自动传递给后端容器
 
-version: '3.8'
-
 services:
   # 后端 API
   backend:
