@@ -1,0 +1,54 @@
+---
+description: 添加新工具模块的规范
+globs: backend/app/modules/**/*.py
+alwaysApply: false
+---
+
+# 新工具模块开发
+
+## 后端模块结构
+
+在 `backend/app/modules/` 创建新目录：
+
+```
+modules/new_tool/
+└── __init__.py    # 实现工具逻辑，导出函数
+```
+
+## 模块实现模式
+
+```python
+# modules/new_tool/__init__.py
+"""新工具模块"""
+
+def process_data(input: str, option: str = "default") -> dict:
+    """
+    处理数据
+    
+    Args:
+        input: 输入数据
+        option: 处理选项
+    
+    Returns:
+        处理结果字典
+    """
+    # 实现逻辑
+    result = ...
+    return {"success": True, "result": result}
+```
+
+## 添加 API 端点
+
+在 `api/v1/tools.py` 添加路由，或创建新的路由文件。
+
+## 前端页面
+
+1. 在 `features/tools/` 创建 `NewTools.tsx`
+2. 在 `App.tsx` 添加路由
+3. 在 `Sidebar.tsx` 添加导航项
+
+## 完整流程
+
+1. 后端: 创建模块 → 添加 API → 测试
+2. 运行 `npm run generate-api` 生成客户端
+3. 前端: 创建页面 → 添加路由 → 添加导航

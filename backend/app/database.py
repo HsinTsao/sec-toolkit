@@ -2,11 +2,10 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy import event
-from .config import settings
-import os
+from .config import settings, _data_dir
 
-# 确保数据目录存在
-os.makedirs("data", exist_ok=True)
+# 确保数据目录存在（使用 config 中定义的路径）
+_data_dir.mkdir(parents=True, exist_ok=True)
 
 # 创建异步引擎
 engine = create_async_engine(
@@ -60,4 +59,3 @@ async def get_db():
             raise
         finally:
             await session.close()
-

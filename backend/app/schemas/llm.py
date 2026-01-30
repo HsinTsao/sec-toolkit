@@ -47,6 +47,15 @@ LLM_PROVIDERS = [
         icon="🔮"
     ),
     LLMProvider(
+        id="qwen",
+        name="通义千问",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        models=["qwen-turbo", "qwen-plus", "qwen-max", "qwen-max-longcontext"],
+        default_model="qwen-turbo",
+        description="阿里云大模型，中文能力强",
+        icon="🌐"
+    ),
+    LLMProvider(
         id="siliconflow",
         name="硅基流动",
         base_url="https://api.siliconflow.cn/v1",
@@ -95,6 +104,7 @@ class LLMConfigCreate(BaseModel):
     api_key: Optional[str] = Field(None, description="API Key")
     base_url: Optional[str] = Field(None, description="自定义 API 地址")
     model: str = Field(..., description="模型名称")
+    use_system_default: bool = Field(False, description="是否使用系统默认 API Key")
 
 
 class LLMConfigResponse(BaseModel):
@@ -104,6 +114,7 @@ class LLMConfigResponse(BaseModel):
     api_key_set: bool  # 是否已设置 API Key（不返回实际值）
     base_url: Optional[str]
     model: str
+    use_system_default: bool = False  # 是否使用系统默认 API Key
     created_at: datetime
     updated_at: datetime
     

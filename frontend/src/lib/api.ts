@@ -383,8 +383,17 @@ export interface LLMConfig {
   api_key_set: boolean
   base_url: string | null
   model: string
+  use_system_default: boolean
   created_at: string
   updated_at: string
+}
+
+export interface DefaultLLMConfig {
+  available: boolean
+  provider_id: string | null
+  provider_name?: string
+  model: string | null
+  models: string[]
 }
 
 export interface ChatMessage {
@@ -397,12 +406,16 @@ export const llmApi = {
   getProviders: () =>
     api.get<LLMProvider[]>('/llm/providers'),
   
+  // 获取系统默认配置
+  getDefaultConfig: () =>
+    api.get<DefaultLLMConfig>('/llm/default-config'),
+  
   // 获取用户 LLM 配置
   getConfig: () =>
     api.get<LLMConfig>('/llm/config'),
   
   // 更新用户 LLM 配置
-  updateConfig: (data: { provider_id: string; api_key?: string; base_url?: string; model: string }) =>
+  updateConfig: (data: { provider_id: string; api_key?: string; base_url?: string; model: string; use_system_default?: boolean }) =>
     api.put<LLMConfig>('/llm/config', data),
   
   // 删除用户 LLM 配置
@@ -415,6 +428,19 @@ export const llmApi = {
   
   // 聊天（流式）- 返回 URL，需要用 EventSource 处理
   getChatStreamUrl: () => '/api/llm/chat/stream',
+
+  // 快速模式 API（双 LLM 架构，省 Token）
+  fastChat: (data: { message: string; mode?: string; skip_summary?: boolean }) =>
+    api.post<{
+      content: string
+      mode_used: string
+      tokens_estimated: number
+      rule_matched: boolean
+      tool_used: string | null
+      fallback_needed: boolean
+    }>('/llm/fast/chat', data),
+  getFastChatStreamUrl: () => '/api/llm/fast/chat/stream',
+  getFastModeInfo: () => api.get('/llm/fast/info'),
 }
 
 // ==================== Proxy API ====================

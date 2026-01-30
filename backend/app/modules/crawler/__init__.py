@@ -607,99 +607,41 @@ async def fetch_page_with_browser(
     Returns:
         包含 html 和 final_url 的字典，或包含 error 的字典
     """
-    import os
     import logging
-    logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-    
-    # 设置 Playwright 使用本地安装的浏览器（在 venv 内）
-    os.environ['PLAYWRIGHT_BROWSERS_PATH'] = '0'
     
     try:
-        from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+        from ..browser import BrowserManager, BrowserError
     except ImportError:
-        return {'error': 'Playwright 未安装，请运行: pip install playwright && playwright install chromium'}
+        return {'error': '浏览器模块导入失败'}
     
     result = {}
     logger.info(f"[浏览器渲染] 开始访问: {url}")
     
     try:
-        async with async_playwright() as p:
-            # 启动浏览器
-            logger.info("[浏览器渲染] 启动浏览器...")
-            browser = await p.chromium.launch(
-                headless=True,
-                args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+        async with BrowserManager() as browser:
+            # 访问页面
+            await browser.goto(
+                url,
+                wait_time=wait_time,
+                wait_for_selector=wait_for_selector
             )
             
-            try:
-                # 创建页面
-                context = await browser.new_context(
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    viewport={'width': 1920, 'height': 1080},
-                    ignore_https_errors=True
-                )
-                page = await context.new_page()
-                
-                # 访问页面 - 使用 domcontentloaded 而不是 networkidle，避免某些网站永远无法完成
-                logger.info("[浏览器渲染] 访问页面...")
-                try:
-                    response = await page.goto(url, wait_until='domcontentloaded', timeout=30000)
-                except PlaywrightTimeout:
-                    logger.warning("[浏览器渲染] 页面加载超时，继续尝试获取内容...")
-                    response = None
-                
-                if response and response.status >= 400:
-                    result['error'] = f"页面返回错误状态码: {response.status}"
-                    return result
-                
-                # 等待页面加载
-                logger.info(f"[浏览器渲染] 等待 {wait_time} 秒让 JS 执行...")
-                if wait_for_selector:
-                    try:
-                        await page.wait_for_selector(wait_for_selector, timeout=wait_time * 1000)
-                    except PlaywrightTimeout:
-                        pass  # 超时也继续
-                else:
-                    # 等待指定时间让 JS 执行
-                    await page.wait_for_timeout(wait_time * 1000)
-                
-                # 滚动页面以触发懒加载
-                logger.info("[浏览器渲染] 滚动页面触发懒加载...")
-                try:
-                    await page.evaluate('''
-                        async () => {
-                            const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-                            for (let i = 0; i < 3; i++) {
-                                window.scrollTo(0, document.body.scrollHeight * (i + 1) / 3);
-                                await delay(300);
-                            }
-                            window.scrollTo(0, 0);
-                        }
-                    ''')
-                except Exception as scroll_err:
-                    logger.warning(f"[浏览器渲染] 滚动失败: {scroll_err}")
-                
-                # 再等待一下让懒加载完成
-                await page.wait_for_timeout(1000)
-                
-                # 获取渲染后的 HTML
-                logger.info("[浏览器渲染] 获取页面内容...")
-                html = await page.content()
-                final_url = page.url
-                
-                result['html'] = html
-                result['final_url'] = final_url
-                logger.info(f"[浏览器渲染] 完成，HTML 长度: {len(html)}")
-                
-            finally:
-                logger.info("[浏览器渲染] 关闭浏览器...")
-                await browser.close()
-                
-    except PlaywrightTimeout as e:
-        logger.error(f"[浏览器渲染] 超时: {str(e)}")
-        result['error'] = f"浏览器渲染超时: 页面加载时间过长"
+            # 滚动触发懒加载
+            await browser.scroll_to_bottom()
+            await browser.page.wait_for_timeout(1000)
+            
+            # 获取内容
+            html = await browser.content()
+            final_url = browser.page.url
+            
+            result['html'] = html
+            result['final_url'] = final_url
+            logger.info(f"[浏览器渲染] 完成，HTML 长度: {len(html)}")
+            
+    except BrowserError as e:
+        logger.error(f"[浏览器渲染] 错误: {str(e)}")
+        result['error'] = str(e)
     except Exception as e:
         logger.error(f"[浏览器渲染] 失败: {str(e)}")
         result['error'] = f"浏览器渲染失败: {str(e)}"

@@ -7,7 +7,6 @@ from .callback import CallbackToken, CallbackRecord
 from .poc_rule import PocRule
 from .llm_config import UserLLMConfig
 from .knowledge import UploadedFile, KnowledgeItem
-from .audit_log import AgentSession, AuditLog, AuditEventType
 
 __all__ = [
     "User",
@@ -18,6 +17,5 @@ __all__ = [
     "PocRule",
     "UserLLMConfig",
     "UploadedFile", "KnowledgeItem",
-    "AgentSession", "AuditLog", "AuditEventType",
 ]
 

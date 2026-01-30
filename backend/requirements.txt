@@ -39,3 +39,5 @@ aiofiles>=23.2.1
 # 中文分词
 jieba>=0.42.1
 
+# 网络搜索（duckduckgo_search 已重命名为 ddgs）
+ddgs>=9.0.0

@@ -1,0 +1,78 @@
+---
+description: 给 LLM Agent 添加新 Tool 的全链路指南
+globs: backend/app/agent/**/*.py
+alwaysApply: false
+---
+
+# LLM Agent Tool 开发指南
+
+## 全链路步骤
+
+### 1. 创建底层模块（可选）
+
+如果工具需要复杂逻辑，先在 `backend/app/modules/` 创建模块：
+
+```python
+# backend/app/modules/new_module/__init__.py
+async def do_something(param: str) -> dict:
+    """实现核心逻辑"""
+    return {"result": "..."}
+```
+
+### 2. 创建 Agent Tool 文件
+
+在 `backend/app/agent/tools/` 创建工具文件：
+
+```python
+# backend/app/agent/tools/new_tool.py
+from ..base import ToolParameter, ParameterType
+from ..registry import ToolRegistry
+
+async def tool_function(param: str, option: str = "default") -> dict:
+    """工具实现"""
+    # 调用底层模块或直接实现
+    return {"success": True, "data": "..."}
+
+def register_new_tools(registry: ToolRegistry) -> None:
+    registry.register_function(
+        name="tool_name",
+        description="工具描述（用于 Intent LLM 识别）",
+        func=tool_function,
+        parameters=[
+            ToolParameter(name="param", type=ParameterType.STRING, required=True, description="参数说明"),
+            ToolParameter(name="option", type=ParameterType.STRING, required=False, description="可选参数"),
+        ],
+        category="search",  # 分类: encode/decode/hash/network/search/browser
+    )
+```
+
+### 3. 注册工具
+
+在 `backend/app/agent/tools/__init__.py` 添加：
+
+```python
+from .new_tool import register_new_tools
+
+def register_builtin_tools() -> None:
+    # ... 已有注册 ...
+    register_new_tools(tool_registry)
+```
+
+### 4. 刷新 Intent Prompt
+
+工具会自动出现在动态生成的 Prompt 中。如需调整优先级，修改 `intent.py` 中的 `priority_order` 列表。
+
+## 常用分类
+
+| category | 用途 |
+|----------|------|
+| encode | 编码工具 |
+| decode | 解码工具 |
+| hash | 哈希计算 |
+| network | 网络查询 (DNS/WHOIS/IP) |
+| search | 搜索类 (web_search/news/weather) |
+| browser | 浏览器操作 |
+
+## 测试
+
+重启服务后，在 AI Chat 中测试自然语言触发。

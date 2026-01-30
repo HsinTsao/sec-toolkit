@@ -27,9 +27,33 @@ from ..deps import get_current_user
 
 # Agent Tool Calling
 from ...agent import tool_registry, tool_executor
-from ...agent.audit import AuditLogger, get_user_sessions, get_session_logs, get_session_detail, get_user_stats
 
 router = APIRouter(prefix="/llm", tags=["LLM"])
+
+
+# ==================== HTTP 客户端连接池 ====================
+
+_llm_http_client: Optional[httpx.AsyncClient] = None
+
+
+def get_llm_http_client() -> httpx.AsyncClient:
+    """获取 LLM HTTP 客户端（单例，复用连接池）"""
+    global _llm_http_client
+    if _llm_http_client is None or _llm_http_client.is_closed:
+        _llm_http_client = httpx.AsyncClient(
+            timeout=120.0,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=50),
+        )
+    return _llm_http_client
+
+
+async def close_llm_http_client():
+    """关闭 LLM HTTP 客户端（应用关闭时调用）"""
+    global _llm_http_client
+    if _llm_http_client and not _llm_http_client.is_closed:
+        await _llm_http_client.aclose()
+        _llm_http_client = None
+        logger.info("LLM HTTP 客户端已关闭")
 
 
 # ==================== LLM 提供商 ====================
@@ -38,6 +62,32 @@ router = APIRouter(prefix="/llm", tags=["LLM"])
 async def get_llm_providers():
     """获取所有 LLM 提供商列表"""
     return LLM_PROVIDERS
+
+
+@router.get("/default-config")
+async def get_default_config():
+    """获取系统默认 LLM 配置状态"""
+    default_config = get_default_llm_config()
+    
+    if not default_config:
+        return {
+            "available": False,
+            "provider_id": None,
+            "model": None,
+            "models": [],
+        }
+    
+    # 获取提供商支持的模型列表
+    provider = LLM_PROVIDERS_MAP.get(default_config.provider_id)
+    models = provider.models if provider else [default_config.model]
+    
+    return {
+        "available": True,
+        "provider_id": default_config.provider_id,
+        "provider_name": provider.name if provider else default_config.provider_id,
+        "model": default_config.model,
+        "models": models,
+    }
 
 
 # ==================== 用户 LLM 配置 ====================
@@ -62,6 +112,7 @@ async def get_llm_config(
         api_key_set=bool(config.api_key),
         base_url=config.base_url,
         model=config.model,
+        use_system_default=bool(config.use_system_default),
         created_at=config.created_at,
         updated_at=config.updated_at
     )
@@ -89,13 +140,15 @@ async def update_llm_config(
             config.api_key = config_data.api_key
         config.base_url = base_url
         config.model = config_data.model
+        config.use_system_default = config_data.use_system_default
     else:
         config = UserLLMConfig(
             user_id=current_user.id,
             provider_id=config_data.provider_id,
             api_key=config_data.api_key,
             base_url=base_url,
-            model=config_data.model
+            model=config_data.model,
+            use_system_default=config_data.use_system_default
         )
         db.add(config)
     
@@ -108,6 +161,7 @@ async def update_llm_config(
         api_key_set=bool(config.api_key),
         base_url=config.base_url,
         model=config.model,
+        use_system_default=bool(config.use_system_default),
         created_at=config.created_at,
         updated_at=config.updated_at
     )
@@ -217,11 +271,25 @@ async def get_user_llm_config(user_id: str, db: AsyncSession):
     )
     config = result.scalar_one_or_none()
     
+    # 如果用户选择使用系统默认配置
+    if config and config.use_system_default:
+        default_config = get_default_llm_config()
+        if default_config:
+            # 使用用户选择的模型，但用系统默认的 API Key
+            default_config.model = config.model or default_config.model
+            logger.info(f"用户 {user_id} 使用系统默认 LLM 配置 (provider={default_config.provider_id}, model={default_config.model})")
+            return default_config
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="系统默认配置不可用，请联系管理员或使用自己的 API Key"
+            )
+    
     # 如果用户有配置且有 API Key（或者是 Ollama），使用用户配置
     if config and (config.api_key or config.provider_id == "ollama"):
         return config
     
-    # 尝试使用系统默认配置
+    # 尝试使用系统默认配置（用户未配置时的 fallback）
     default_config = get_default_llm_config()
     if default_config:
         logger.info(f"用户 {user_id} 使用系统默认 LLM 配置 (provider={default_config.provider_id})")
@@ -286,7 +354,7 @@ async def search_knowledge_base(
     eng_words = re.findall(r'[a-zA-Z]{2,}', query)
     keywords = list(dict.fromkeys(eng_words + keywords))[:10]
     
-    print(f"🔑 [RAG] jieba 分词关键词: {keywords}")
+    logger.debug(f"[RAG] 分词关键词: {keywords}")
     
     if keywords:
         # 构建 OR 条件：标题或内容包含任意关键词
@@ -384,38 +452,38 @@ async def chat(
     
     messages.append({"role": "user", "content": request.message})
     
-    # 调用 LLM
+    # 调用 LLM（使用连接池）
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{config.base_url}/chat/completions",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {config.api_key}"
-                },
-                json={
-                    "model": config.model,
-                    "messages": messages,
-                    "stream": False
-                }
-            )
-            
-            if response.status_code != 200:
-                error_detail = response.text
-                try:
-                    error_json = response.json()
-                    error_detail = error_json.get("error", {}).get("message", error_detail)
-                except:
-                    pass
-                raise HTTPException(status_code=response.status_code, detail=error_detail)
-            
-            result = response.json()
-            content = result["choices"][0]["message"]["content"]
-            
-            return ChatResponse(
-                content=content, 
-                sources=[s.model_dump() for s in sources]
-            )
+        client = get_llm_http_client()
+        response = await client.post(
+            f"{config.base_url}/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {config.api_key}"
+            },
+            json={
+                "model": config.model,
+                "messages": messages,
+                "stream": False
+            }
+        )
+        
+        if response.status_code != 200:
+            error_detail = response.text
+            try:
+                error_json = response.json()
+                error_detail = error_json.get("error", {}).get("message", error_detail)
+            except:
+                pass
+            raise HTTPException(status_code=response.status_code, detail=error_detail)
+        
+        result = response.json()
+        content = result["choices"][0]["message"]["content"]
+        
+        return ChatResponse(
+            content=content, 
+            sources=[s.model_dump() for s in sources]
+        )
             
     except httpx.TimeoutException:
         raise HTTPException(status_code=504, detail="LLM 请求超时")
@@ -430,7 +498,13 @@ async def chat_stream(
     db: AsyncSession = Depends(get_db)
 ):
     """聊天接口（流式，支持 RAG）"""
+    import time
+    start_time = time.time()
+    
+    logger.info(f"💬 [Chat] 开始处理: user={current_user.username}, message={request.message[:50]}..., use_knowledge={request.use_knowledge}")
+    
     config = await get_user_llm_config(current_user.id, db)
+    logger.debug(f"💬 [Chat] LLM配置: model={config.model}")
     
     # RAG 检索
     sources: List[RAGSource] = []
@@ -474,38 +548,38 @@ async def chat_stream(
             yield f"data: {json.dumps({'sources': [s.model_dump() for s in sources]})}\n\n"
         
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                async with client.stream(
-                    "POST",
-                    f"{config.base_url}/chat/completions",
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {config.api_key}"
-                    },
-                    json={
-                        "model": config.model,
-                        "messages": messages,
-                        "stream": True
-                    }
-                ) as response:
-                    if response.status_code != 200:
-                        error_text = await response.aread()
-                        yield f"data: {json.dumps({'error': error_text.decode()})}\n\n"
-                        return
-                    
-                    async for line in response.aiter_lines():
-                        if line.startswith("data: "):
-                            data = line[6:]
-                            if data == "[DONE]":
-                                yield f"data: {json.dumps({'done': True})}\n\n"
-                                break
-                            try:
-                                chunk = json.loads(data)
-                                content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                                if content:
-                                    yield f"data: {json.dumps({'content': content})}\n\n"
-                            except json.JSONDecodeError:
-                                pass
+            client = get_llm_http_client()
+            async with client.stream(
+                "POST",
+                f"{config.base_url}/chat/completions",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {config.api_key}"
+                },
+                json={
+                    "model": config.model,
+                    "messages": messages,
+                    "stream": True
+                }
+            ) as response:
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    yield f"data: {json.dumps({'error': error_text.decode()})}\n\n"
+                    return
+                
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data = line[6:]
+                        if data == "[DONE]":
+                            yield f"data: {json.dumps({'done': True})}\n\n"
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                            if content:
+                                yield f"data: {json.dumps({'content': content})}\n\n"
+                        except json.JSONDecodeError:
+                            pass
                                 
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
@@ -514,8 +588,10 @@ async def chat_stream(
         generate(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
+            "Transfer-Encoding": "chunked",
         }
     )
 
@@ -607,27 +683,14 @@ async def agent_chat_stream(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Agent 聊天接口（流式，支持 Tool Calling 和审计日志）
+    Agent 聊天接口（流式，支持 Tool Calling）
     
     支持 LLM 自动调用工具完成任务，工具执行结果会自动反馈给 LLM 继续处理。
-    所有操作都会被记录到审计日志中。
     """
+    logger.info(f"🤖 [AgentChat] 开始处理: user={current_user.username}, message={request.message[:50]}..., use_tools={request.use_tools}")
+    
     config = await get_user_llm_config(current_user.id, db)
-    
-    # 创建审计日志记录器
-    audit = AuditLogger(db, current_user.id)
-    
-    # 开始会话
-    session_id = await audit.start_session(
-        message=request.message,
-        model=config.model,
-        provider=config.provider_id if hasattr(config, 'provider_id') else None,
-        use_tools=request.use_tools,
-        use_knowledge=request.use_knowledge,
-    )
-    
-    # 记录用户消息
-    await audit.log_user_message(request.message)
+    logger.debug(f"🤖 [AgentChat] LLM配置: model={config.model}")
     
     # 构建系统提示词
     system_prompt = AGENT_SYSTEM_PROMPT
@@ -635,19 +698,12 @@ async def agent_chat_stream(
     
     # RAG 检索
     if request.use_knowledge:
-        await audit.log_rag_search(request.message, request.knowledge_sources)
-        
         knowledge_items = await search_knowledge_base(
             user_id=current_user.id,
             query=request.message,
             source_types=request.knowledge_sources,
             limit=5,
             db=db,
-        )
-        
-        await audit.log_rag_result(
-            results=[{"title": item.title} for item in knowledge_items],
-            sources=[item.source_type for item in knowledge_items],
         )
         
         if knowledge_items:
@@ -677,12 +733,8 @@ async def agent_chat_stream(
     
     async def generate() -> AsyncGenerator[str, None]:
         nonlocal messages
-        session_status = "completed"
-        session_error = None
         
         try:
-            # 先发送会话 ID
-            yield f"data: {json.dumps({'session_id': session_id})}\n\n"
             
             # 发送知识库来源
             if sources:
@@ -700,37 +752,31 @@ async def agent_chat_stream(
                 iteration += 1
                 
                 try:
-                    # 记录 LLM 请求
-                    await audit.log_llm_request(messages, tools if tools else None)
+                    client = get_llm_http_client()
+                    # 构建请求体
+                    request_body = {
+                        "model": config.model,
+                        "messages": messages,
+                        "stream": True,
+                    }
                     
-                    async with httpx.AsyncClient(timeout=120.0) as client:
-                        # 构建请求体
-                        request_body = {
-                            "model": config.model,
-                            "messages": messages,
-                            "stream": True,
-                        }
-                        
-                        # 添加工具（如果有）
-                        if tools:
-                            request_body["tools"] = tools
-                            request_body["tool_choice"] = "auto"
-                        
-                        async with client.stream(
-                            "POST",
-                            f"{config.base_url}/chat/completions",
-                            headers={
-                                "Content-Type": "application/json",
-                                "Authorization": f"Bearer {config.api_key}"
-                            },
-                            json=request_body
-                        ) as response:
+                    # 添加工具（如果有）
+                    if tools:
+                        request_body["tools"] = tools
+                        request_body["tool_choice"] = "auto"
+                    
+                    async with client.stream(
+                        "POST",
+                        f"{config.base_url}/chat/completions",
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {config.api_key}"
+                        },
+                        json=request_body
+                    ) as response:
                             if response.status_code != 200:
                                 error_text = await response.aread()
                                 error_msg = error_text.decode()
-                                await audit.log_llm_error(error_msg)
-                                session_status = "error"
-                                session_error = error_msg
                                 yield f"data: {json.dumps({'error': error_msg})}\n\n"
                                 return
                             
@@ -782,11 +828,8 @@ async def agent_chat_stream(
                                 except json.JSONDecodeError:
                                     pass
                             
-                            # 记录 LLM 响应
-                            has_tool_calls = finish_reason == "tool_calls" and bool(tool_calls_data)
-                            await audit.log_llm_response(full_content, has_tool_calls=has_tool_calls)
-                            
                             # 检查是否有工具调用
+                            has_tool_calls = finish_reason == "tool_calls" and bool(tool_calls_data)
                             if has_tool_calls:
                                 tool_calls = list(tool_calls_data.values())
                                 
@@ -806,17 +849,11 @@ async def agent_chat_stream(
                                     except json.JSONDecodeError:
                                         arguments = {}
                                     
-                                    # 记录工具调用
-                                    await audit.log_tool_call(tool_name, arguments, tool_call_id)
-                                    
                                     # 通知前端工具调用开始
                                     yield f"data: {json.dumps({'tool_call': {'name': tool_name, 'arguments': arguments, 'status': 'executing'}})}\n\n"
                                     
                                     # 执行工具
                                     result = await tool_executor.execute(tool_name, arguments, require_confirmation=False)
-                                    
-                                    # 记录工具结果
-                                    await audit.log_tool_result(tool_name, result.model_dump(), result.success)
                                     
                                     # 格式化结果
                                     if result.success:
@@ -844,132 +881,228 @@ async def agent_chat_stream(
                 except Exception as e:
                     error_msg = str(e)
                     logger.exception("Agent chat error")
-                    await audit.log_llm_error(error_msg)
-                    session_status = "error"
-                    session_error = error_msg
                     yield f"data: {json.dumps({'error': error_msg})}\n\n"
                     return
             
             # 达到最大迭代次数
             yield f"data: {json.dumps({'warning': '达到最大工具调用次数限制', 'done': True})}\n\n"
             
-        finally:
-            # 结束会话
-            await audit.end_session(status=session_status, error=session_error)
-            await db.commit()
+        except Exception as e:
+            logger.exception("Agent generate error")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
     
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
+            "Transfer-Encoding": "chunked",
         }
     )
 
 
-# ==================== 审计日志 API ====================
+# ==================== 双 LLM 架构 API (省 Token 模式) ====================
 
-@router.get("/agent/sessions")
-async def list_agent_sessions(
-    limit: int = 50,
-    offset: int = 0,
+from ...agent.dual_llm import DualLLMAgent, LLMConfig, AgentMode, DualLLMResult, get_shared_agent
+from ...agent.intent import IntentCategory
+
+
+class UserContext(BaseModel):
+    """用户上下文信息"""
+    location: Optional[str] = Field(default=None, description="用户位置（城市名）")
+    timezone: Optional[str] = Field(default=None, description="用户时区")
+    language: Optional[str] = Field(default="zh-CN", description="用户语言")
+
+
+class FastChatRequest(BaseModel):
+    """快速聊天请求（双 LLM 模式）"""
+    message: str = Field(..., description="用户消息")
+    mode: str = Field(default="auto", description="模式: auto/fast/full")
+    skip_summary: bool = Field(default=False, description="跳过 Summary LLM")
+    context: Optional[UserContext] = Field(default=None, description="用户上下文信息")
+
+
+class FastChatResponse(BaseModel):
+    """快速聊天响应"""
+    content: str = Field(..., description="回复内容")
+    mode_used: str = Field(..., description="实际使用的模式")
+    tokens_estimated: int = Field(default=0, description="估算 token 消耗")
+    rule_matched: bool = Field(default=False, description="是否规则匹配")
+    tool_used: Optional[str] = Field(None, description="使用的工具")
+    fallback_needed: bool = Field(default=False, description="是否需要 fallback 到完整模式")
+
+
+@router.post("/fast/chat", response_model=FastChatResponse)
+async def fast_chat(
+    request: FastChatRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取用户的 Agent 会话列表"""
-    sessions = await get_user_sessions(db, current_user.id, limit, offset)
-    return {
-        "sessions": [
-            {
-                "id": s.id,
-                "initial_message": s.initial_message,
-                "model": s.model,
-                "provider": s.provider,
-                "message_count": s.message_count,
-                "tool_call_count": s.tool_call_count,
-                "status": s.status,
-                "started_at": s.started_at.isoformat() if s.started_at else None,
-                "ended_at": s.ended_at.isoformat() if s.ended_at else None,
-            }
-            for s in sessions
-        ],
-        "total": len(sessions),
+    """
+    快速聊天接口（双 LLM 架构，省 Token）
+    
+    工作流程:
+    1. 规则匹配 → 工具执行 → 格式化返回 (0 token)
+    2. Intent LLM → 工具执行 → Summary LLM (~400 tokens)
+    3. 复杂问题 fallback 到完整 LLM
+    
+    相比传统 Tool Calling，Token 消耗降低 60-70%
+    """
+    import time
+    start_time = time.time()
+    logger.info(f"⚡ [FastChat] 开始处理: user={current_user.username}, msg={request.message[:50]}...")
+    
+    config = await get_user_llm_config(current_user.id, db)
+    
+    # 使用共享 Agent（避免每次请求都创建新的 HTTP 客户端）
+    agent_config = LLMConfig(
+        base_url=config.base_url,
+        api_key=config.api_key,
+        model=config.model,
+        intent_model=getattr(settings, 'INTENT_LLM_MODEL', None),
+        summary_model=getattr(settings, 'SUMMARY_LLM_MODEL', None),
+    )
+    
+    # 使用共享 Agent 而不是每次创建新的
+    agent = await get_shared_agent(agent_config)
+    
+    try:
+        # 解析模式
+        mode_map = {
+            "auto": AgentMode.AUTO,
+            "fast": AgentMode.FAST,
+            "full": AgentMode.FULL,
+        }
+        mode = mode_map.get(request.mode, AgentMode.AUTO)
+        
+        # 构建用户上下文
+        user_context = {}
+        if request.context:
+            if request.context.location:
+                user_context["location"] = request.context.location
+            if request.context.timezone:
+                user_context["timezone"] = request.context.timezone
+        
+        # 处理请求
+        result = await agent.process(
+            request.message,
+            mode=mode,
+            skip_summary=request.skip_summary,
+            user_context=user_context,
+        )
+        
+        # 检查是否需要 fallback
+        fallback_needed = (
+            result.intent and 
+            result.intent.category in (IntentCategory.CHAT, IntentCategory.ANALYZE) and
+            not result.content
+        )
+        
+        elapsed = (time.time() - start_time) * 1000
+        logger.info(f"✅ [FastChat] 完成: tool={result.intent.tool if result.intent else None}, tokens={result.tokens_estimated}, rule={result.rule_matched}, fallback={fallback_needed}, {elapsed:.0f}ms")
+        
+        return FastChatResponse(
+            content=result.content,
+            mode_used=result.mode_used.value,
+            tokens_estimated=result.tokens_estimated,
+            rule_matched=result.rule_matched,
+            tool_used=result.intent.tool if result.intent else None,
+            fallback_needed=fallback_needed,
+        )
+    except Exception as e:
+        elapsed = (time.time() - start_time) * 1000
+        logger.error(f"❌ [FastChat] 错误: {e}, {elapsed:.0f}ms", exc_info=True)
+        raise
+    # 注意：不再需要 finally 中关闭 agent，因为使用的是共享 Agent
+
+
+@router.post("/fast/chat/stream")
+async def fast_chat_stream(
+    request: FastChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    快速聊天流式接口（双 LLM 架构）
+    
+    返回 SSE 流，包含各阶段状态:
+    - intent: 意图识别结果
+    - tool: 工具执行状态
+    - content: 最终内容
+    - fallback: 需要切换到完整模式
+    - done: 完成
+    """
+    config = await get_user_llm_config(current_user.id, db)
+    
+    agent_config = LLMConfig(
+        base_url=config.base_url,
+        api_key=config.api_key,
+        model=config.model,
+        intent_model=getattr(settings, 'INTENT_LLM_MODEL', None),
+        summary_model=getattr(settings, 'SUMMARY_LLM_MODEL', None),
+    )
+    
+    agent = DualLLMAgent(agent_config)
+    
+    mode_map = {
+        "auto": AgentMode.AUTO,
+        "fast": AgentMode.FAST,
+        "full": AgentMode.FULL,
     }
+    mode = mode_map.get(request.mode, AgentMode.AUTO)
+    
+    async def generate() -> AsyncGenerator[str, None]:
+        try:
+            async for event in agent.process_stream(request.message, mode=mode):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.exception("Fast chat stream error")
+            yield f"data: {json.dumps({'stage': 'error', 'data': str(e)})}\n\n"
+        finally:
+            await agent.close()
+    
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 Nginx 缓冲
+            "Transfer-Encoding": "chunked",
+        }
+    )
 
 
-@router.get("/agent/sessions/{session_id}")
-async def get_agent_session(
-    session_id: str,
+@router.get("/fast/info")
+async def get_fast_mode_info(
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    """获取会话详情和完整日志"""
-    session = await get_session_detail(db, session_id, current_user.id)
-    if not session:
-        raise HTTPException(status_code=404, detail="会话不存在")
+    """
+    获取快速模式信息
     
-    logs = await get_session_logs(db, session_id, current_user.id)
-    
+    返回支持的工具分类和预估 token 消耗对比
+    """
     return {
-        "session": {
-            "id": session.id,
-            "initial_message": session.initial_message,
-            "model": session.model,
-            "provider": session.provider,
-            "message_count": session.message_count,
-            "tool_call_count": session.tool_call_count,
-            "total_tokens": session.total_tokens,
-            "use_tools": bool(session.use_tools),
-            "use_knowledge": bool(session.use_knowledge),
-            "status": session.status,
-            "error_message": session.error_message,
-            "started_at": session.started_at.isoformat() if session.started_at else None,
-            "ended_at": session.ended_at.isoformat() if session.ended_at else None,
+        "enabled": getattr(settings, 'DUAL_LLM_ENABLED', True),
+        "supported_categories": [
+            {"id": "encode", "name": "编码", "examples": ["base64", "url", "html", "hex"]},
+            {"id": "decode", "name": "解码", "examples": ["base64", "url", "html", "hex"]},
+            {"id": "hash", "name": "哈希", "examples": ["md5", "sha256", "hmac"]},
+            {"id": "network", "name": "网络", "examples": ["dns", "whois", "ip"]},
+        ],
+        "fallback_categories": [
+            {"id": "analyze", "name": "安全分析", "reason": "需要完整 LLM 能力"},
+            {"id": "chat", "name": "普通对话", "reason": "开放式问答"},
+        ],
+        "token_comparison": {
+            "traditional": {"per_request": "1000-2000", "description": "传统 Tool Calling"},
+            "fast_mode": {"per_request": "0-400", "description": "双 LLM 架构"},
+            "savings": "60-70%",
         },
-        "logs": [
-            {
-                "id": log.id,
-                "event_type": log.event_type,
-                "event_order": log.event_order,
-                "content": log.content,
-                "extra_data": log.extra_data,
-                "tool_name": log.tool_name,
-                "tool_arguments": log.tool_arguments,
-                "tool_result": log.tool_result,
-                "duration_ms": log.duration_ms,
-                "tokens_used": log.tokens_used,
-                "success": bool(log.success),
-                "error_message": log.error_message,
-                "created_at": log.created_at.isoformat() if log.created_at else None,
-            }
-            for log in logs
-        ],
+        "models": {
+            "intent": getattr(settings, 'INTENT_LLM_MODEL', None) or "使用默认模型",
+            "summary": getattr(settings, 'SUMMARY_LLM_MODEL', None) or "使用默认模型",
+        }
     }
-
-
-@router.get("/agent/stats")
-async def get_agent_stats(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """获取用户的 Agent 使用统计"""
-    stats = await get_user_stats(db, current_user.id)
-    return stats
-
-
-@router.delete("/agent/sessions/{session_id}")
-async def delete_agent_session(
-    session_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """删除会话及其日志"""
-    session = await get_session_detail(db, session_id, current_user.id)
-    if not session:
-        raise HTTPException(status_code=404, detail="会话不存在")
-    
-    await db.delete(session)
-    await db.commit()
-    
-    return {"message": "会话已删除"}

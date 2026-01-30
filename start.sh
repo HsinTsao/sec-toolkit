@@ -10,6 +10,10 @@ FRONTEND_DIR="$PROJECT_DIR/frontend"
 DATA_DIR="$PROJECT_DIR/data"
 CERT_DIR="$PROJECT_DIR/certs"
 
+# 端口配置
+FRONTEND_PORT=80
+BACKEND_PORT=8000
+
 # 颜色
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -36,7 +40,8 @@ show_help() {
     echo -e "${BOLD}用法:${NC} ./start.sh <命令> [--ssl]"
     echo ""
     echo -e "${BOLD}启动命令:${NC}"
-    echo -e "  ${GREEN}dev${NC}         后台运行"
+    echo -e "  ${GREEN}dev${NC}         后台运行（开发模式，热重载）"
+    echo -e "  ${GREEN}lite${NC}        后台运行（低内存模式，无热重载）"
     echo -e "  ${GREEN}run${NC}         前台运行 (推荐)"
     echo -e "  ${GREEN}prod${NC}        Docker 生产环境"
     echo ""
@@ -58,9 +63,33 @@ show_help() {
 # ==================== 检查函数 ====================
 is_running() {
     case "$1" in
-        backend)  pgrep -f "uvicorn app.main:app" > /dev/null 2>&1 ;;
-        frontend) pgrep -f "vite" > /dev/null 2>&1 ;;
+        backend)  
+            # 优先检查端口，其次检查进程
+            (curl -s --max-time 1 http://localhost:$BACKEND_PORT/api/docs > /dev/null 2>&1) || \
+            (pgrep -f "uvicorn.*app.main" > /dev/null 2>&1)
+            ;;
+        frontend) 
+            # 优先检查端口，其次检查进程
+            (curl -s --max-time 1 http://localhost:$FRONTEND_PORT > /dev/null 2>&1) || \
+            (pgrep -f "vite.*--port" > /dev/null 2>&1)
+            ;;
     esac
+}
+
+# 等待服务就绪
+wait_for_service() {
+    local service=$1
+    local max_wait=${2:-10}
+    local count=0
+    
+    while [ $count -lt $max_wait ]; do
+        if is_running "$service"; then
+            return 0
+        fi
+        sleep 1
+        count=$((count + 1))
+    done
+    return 1
 }
 
 # ==================== 初始化 ====================
@@ -71,10 +100,11 @@ init() {
     if [ ! -f "$PROJECT_DIR/.env" ]; then
         local secret=$(openssl rand -hex 32 2>/dev/null || echo "change-me-$(date +%s)")
         cat > "$PROJECT_DIR/.env" << EOF
-DATABASE_URL=sqlite+aiosqlite:///./data/toolkit.db
+# 数据库路径 - 留空则自动检测（推荐）
+# DATABASE_URL=sqlite+aiosqlite:///./data/toolkit.db
 JWT_SECRET_KEY=${secret}
 DEBUG=false
-CORS_ORIGINS=["http://localhost","http://localhost:5173","https://localhost","https://localhost:5173"]
+CORS_ORIGINS=["http://localhost","http://localhost:80","https://localhost","https://localhost:443"]
 EOF
         print_success "环境变量文件已生成"
     fi
@@ -117,12 +147,23 @@ cmd_stop() {
         [ -f "$f" ] && { kill $(cat "$f") 2>/dev/null || true; rm -f "$f"; }
     done
     
-    # 按进程名
-    pkill -f "uvicorn app.main:app" 2>/dev/null || true
-    pkill -f "vite" 2>/dev/null || true
+    # 按进程名杀死所有相关进程
+    pkill -f "uvicorn.*app.main" 2>/dev/null || true
+    pkill -f "vite.*$FRONTEND_PORT" 2>/dev/null || true
+    
+    # 杀死占用端口的进程
+    fuser -k $BACKEND_PORT/tcp 2>/dev/null || true
+    fuser -k $FRONTEND_PORT/tcp 2>/dev/null || true
+    
+    # 杀死所有 sec-toolkit 相关的 Python 和 Node 进程
+    pkill -f "python.*sec-toolkit" 2>/dev/null || true
+    pkill -f "node.*sec-toolkit" 2>/dev/null || true
     
     # Docker
     command -v docker &>/dev/null && (docker compose down 2>/dev/null || true)
+    
+    # 等待进程退出
+    sleep 1
     
     print_success "服务已停止"
 }
@@ -157,30 +198,73 @@ cmd_dev() {
     # 启动后端
     print_info "启动后端..."
     cd "$BACKEND_DIR"
-    nohup ./venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 $ssl_args > "$DATA_DIR/backend.log" 2>&1 &
+    nohup ./venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT $ssl_args > "$DATA_DIR/backend.log" 2>&1 &
     echo $! > "$DATA_DIR/backend.pid"
-    sleep 2
-    is_running "backend" && print_success "后端已启动" || { print_error "后端启动失败"; exit 1; }
+    wait_for_service "backend" 15 && print_success "后端已启动" || { print_error "后端启动失败，查看日志: cat $DATA_DIR/backend.log"; exit 1; }
     
     # 启动前端
     print_info "启动前端..."
     cd "$FRONTEND_DIR"
     if [ "$use_ssl" = "true" ]; then
-        VITE_HTTPS=true nohup npm run dev > "$DATA_DIR/frontend.log" 2>&1 &
+        VITE_HTTPS=true nohup npx vite --host --port $FRONTEND_PORT > "$DATA_DIR/frontend.log" 2>&1 &
     else
-        nohup npm run dev > "$DATA_DIR/frontend.log" 2>&1 &
+        nohup npx vite --host --port $FRONTEND_PORT > "$DATA_DIR/frontend.log" 2>&1 &
     fi
     echo $! > "$DATA_DIR/frontend.pid"
-    sleep 2
-    is_running "frontend" && print_success "前端已启动" || { print_error "前端启动失败"; exit 1; }
+    wait_for_service "frontend" 10 && print_success "前端已启动" || { print_error "前端启动失败，查看日志: cat $DATA_DIR/frontend.log"; exit 1; }
     
     # 显示信息
     local proto="http"; [ "$use_ssl" = "true" ] && proto="https"
     echo ""
     print_success "启动完成！"
-    echo -e "  ${GREEN}前端:${NC} ${proto}://localhost:5173"
-    echo -e "  ${GREEN}后端:${NC} ${proto}://localhost:8000"
-    echo -e "  ${GREEN}文档:${NC} ${proto}://localhost:8000/api/docs"
+    echo -e "  ${GREEN}前端:${NC} ${proto}://localhost"
+    echo -e "  ${GREEN}后端:${NC} ${proto}://localhost:${BACKEND_PORT}"
+    echo -e "  ${GREEN}文档:${NC} ${proto}://localhost:${BACKEND_PORT}/api/docs"
+}
+
+cmd_lite() {
+    local use_ssl=$1
+    
+    # 检查是否已运行
+    if is_running "backend" || is_running "frontend"; then
+        print_warning "服务已在运行"
+        cmd_status
+        return
+    fi
+    
+    # 设置环境
+    setup_backend
+    setup_frontend
+    [ "$use_ssl" = "true" ] && generate_ssl
+    
+    # SSL 参数
+    local ssl_args=""
+    [ "$use_ssl" = "true" ] && ssl_args="--ssl-keyfile=$CERT_DIR/server.key --ssl-certfile=$CERT_DIR/server.crt"
+    
+    # 启动后端（无热重载，低内存）
+    print_info "启动后端（低内存模式）..."
+    cd "$BACKEND_DIR"
+    nohup ./venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $BACKEND_PORT --workers 1 $ssl_args > "$DATA_DIR/backend.log" 2>&1 &
+    echo $! > "$DATA_DIR/backend.pid"
+    wait_for_service "backend" 15 && print_success "后端已启动" || { print_error "后端启动失败"; exit 1; }
+    
+    # 启动前端（预览模式，先构建再预览）
+    print_info "构建前端..."
+    cd "$FRONTEND_DIR"
+    npm run build > /dev/null 2>&1
+    
+    print_info "启动前端（预览模式）..."
+    nohup npx vite preview --host --port $FRONTEND_PORT > "$DATA_DIR/frontend.log" 2>&1 &
+    echo $! > "$DATA_DIR/frontend.pid"
+    wait_for_service "frontend" 10 && print_success "前端已启动" || { print_error "前端启动失败"; exit 1; }
+    
+    # 显示信息
+    local proto="http"; [ "$use_ssl" = "true" ] && proto="https"
+    echo ""
+    print_success "启动完成（低内存模式）！"
+    echo -e "  ${GREEN}前端:${NC} ${proto}://localhost"
+    echo -e "  ${GREEN}后端:${NC} ${proto}://localhost:${BACKEND_PORT}"
+    echo -e "  ${YELLOW}注意:${NC} 代码修改后需重新执行 ./start.sh lite"
 }
 
 cmd_run() {
@@ -202,14 +286,14 @@ cmd_run() {
     print_info "启动前端..."
     cd "$FRONTEND_DIR"
     if [ "$use_ssl" = "true" ]; then
-        VITE_HTTPS=true nohup npm run dev > "$DATA_DIR/frontend.log" 2>&1 &
+        VITE_HTTPS=true nohup npx vite --host --port $FRONTEND_PORT > "$DATA_DIR/frontend.log" 2>&1 &
     else
-        nohup npm run dev > "$DATA_DIR/frontend.log" 2>&1 &
+        nohup npx vite --host --port $FRONTEND_PORT > "$DATA_DIR/frontend.log" 2>&1 &
     fi
     echo $! > "$DATA_DIR/frontend.pid"
     
     local proto="http"; [ "$use_ssl" = "true" ] && proto="https"
-    print_success "前端已启动: ${proto}://localhost:5173"
+    print_success "前端已启动: ${proto}://localhost"
     
     # 启动后端 (前台)
     print_info "启动后端 (前台)..."
@@ -217,15 +301,15 @@ cmd_run() {
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
     echo -e "${GREEN}  后端日志 (Ctrl+C 停止)${NC}"
     echo -e "${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-    echo -e "  ${GREEN}前端:${NC} ${proto}://localhost:5173"
-    echo -e "  ${GREEN}后端:${NC} ${proto}://localhost:8000"
-    echo -e "  ${GREEN}文档:${NC} ${proto}://localhost:8000/api/docs"
+    echo -e "  ${GREEN}前端:${NC} ${proto}://localhost"
+    echo -e "  ${GREEN}后端:${NC} ${proto}://localhost:${BACKEND_PORT}"
+    echo -e "  ${GREEN}文档:${NC} ${proto}://localhost:${BACKEND_PORT}/api/docs"
     echo ""
     
     trap "echo ''; print_info '停止服务...'; cmd_stop; exit 0" SIGINT SIGTERM
     
     cd "$BACKEND_DIR"
-    ./venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 $ssl_args
+    ./venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port $BACKEND_PORT $ssl_args
 }
 
 cmd_prod() {
@@ -247,7 +331,7 @@ cmd_prod() {
     echo ""
     print_success "启动完成！"
     echo -e "  ${GREEN}前端:${NC} ${proto}://localhost"
-    echo -e "  ${GREEN}后端:${NC} ${proto}://localhost:8000"
+    echo -e "  ${GREEN}后端:${NC} ${proto}://localhost:${BACKEND_PORT}"
 }
 
 cmd_logs() {
@@ -261,7 +345,7 @@ cmd_logs() {
 }
 
 cmd_sync_api() {
-    curl -s "http://localhost:8000/api/openapi.json" > /dev/null 2>&1 || { print_error "后端未运行"; exit 1; }
+    curl -s "http://localhost:${BACKEND_PORT}/api/openapi.json" > /dev/null 2>&1 || { print_error "后端未运行"; exit 1; }
     
     cd "$FRONTEND_DIR"
     [ ! -d "node_modules" ] && npm install
@@ -275,7 +359,7 @@ cmd_clean() {
     [ "$c" != "y" ] && [ "$c" != "Y" ] && return
     
     cmd_stop
-    rm -rf "$DATA_DIR"/*.db "$DATA_DIR"/*.log "$DATA_DIR"/*.pid
+    rm -rf "$DATA_DIR"/*.db "$DATA_DIR"/*.db-shm "$DATA_DIR"/*.db-wal "$DATA_DIR"/*.log "$DATA_DIR"/*.pid
     rm -rf "$FRONTEND_DIR/node_modules" "$FRONTEND_DIR/dist"
     rm -rf "$BACKEND_DIR/venv" "$BACKEND_DIR/__pycache__"
     docker compose down -v --rmi all 2>/dev/null || true
@@ -309,6 +393,7 @@ main() {
             init
             case "$cmd" in
                 dev)      cmd_dev "$use_ssl" ;;
+                lite)     cmd_lite "$use_ssl" ;;
                 run)      cmd_run "$use_ssl" ;;
                 prod)     cmd_prod "$use_ssl" ;;
                 logs)     cmd_logs ;;

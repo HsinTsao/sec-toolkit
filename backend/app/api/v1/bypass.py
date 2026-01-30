@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from typing import Optional, Literal
 from app.modules import bypass
 
-router = APIRouter(tags=["bypass"])
+router = APIRouter()
 
 
 class UrlEncodeRequest(BaseModel):

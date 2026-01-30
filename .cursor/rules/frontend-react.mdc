@@ -1,0 +1,69 @@
+---
+description: React/TypeScript 前端开发规范
+globs: frontend/**/*.tsx
+alwaysApply: false
+---
+
+# 前端开发规范
+
+## 组件结构
+
+功能页面放在 `features/` 目录，可复用组件放在 `components/` 目录。
+
+## 状态管理 - Zustand
+
+```typescript
+// stores/exampleStore.ts
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+
+interface ExampleState {
+  data: string[]
+  setData: (data: string[]) => void
+}
+
+export const useExampleStore = create<ExampleState>()(
+  persist(
+    (set) => ({
+      data: [],
+      setData: (data) => set({ data }),
+    }),
+    { name: 'example-storage' }
+  )
+)
+```
+
+## API 调用
+
+使用生成的 API 客户端，配合 React Query：
+
+```typescript
+import { toolsApi } from '@/lib/api'
+import { useQuery } from '@tanstack/react-query'
+
+const { data, isLoading } = useQuery({
+  queryKey: ['tools'],
+  queryFn: () => toolsApi.listTools(),
+})
+```
+
+## 样式规范
+
+使用 TailwindCSS + 主题变量：
+
+```tsx
+// ✅ 使用主题变量
+<div className="bg-theme-card text-theme-text border-theme-border">
+
+// ✅ 使用 cn() 合并类名
+import { cn } from '@/lib/utils'
+<button className={cn('btn', isActive && 'btn-active')}>
+```
+
+## 图标
+
+使用 lucide-react 图标库：
+
+```typescript
+import { Settings, User, Lock } from 'lucide-react'
+```

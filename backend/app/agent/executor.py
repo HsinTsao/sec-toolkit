@@ -55,22 +55,27 @@ class ToolExecutor:
         if not tool:
             return ToolResult.fail(f"工具不存在: {tool_name}")
         
-        # 检查是否需要确认（这里只是标记，实际确认逻辑在上层处理）
+        # 检查是否需要确认
         if require_confirmation and tool.requires_confirmation:
+            logger.warning(f"🔧 [ToolExecutor] 工具需要确认: {tool_name}")
             return ToolResult(
                 success=False,
                 error="此工具需要用户确认后才能执行",
                 data={"requires_confirmation": True, "tool_name": tool_name}
             )
         
-        logger.info(f"执行工具: {tool_name}, 参数: {arguments}")
+        import time
+        start_time = time.time()
+        logger.info(f"🔧 [ToolExecutor] 开始执行: {tool_name}({arguments})")
         
         try:
             result = await tool.execute(**arguments)
-            logger.info(f"工具 {tool_name} 执行完成: success={result.success}")
+            elapsed = (time.time() - start_time) * 1000
+            logger.info(f"🔧 [ToolExecutor] 执行完成: {tool_name}, success={result.success}, 耗时={elapsed:.0f}ms")
             return result
         except Exception as e:
-            logger.exception(f"工具 {tool_name} 执行异常")
+            elapsed = (time.time() - start_time) * 1000
+            logger.error(f"🔧 [ToolExecutor] 执行异常: {tool_name}, error={e}, 耗时={elapsed:.0f}ms", exc_info=True)
             return ToolResult.fail(f"执行异常: {str(e)}")
     
     async def execute_batch(

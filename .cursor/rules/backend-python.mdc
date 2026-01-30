@@ -1,0 +1,57 @@
+---
+description: Python 后端开发规范 (FastAPI + SQLAlchemy)
+globs: backend/**/*.py
+alwaysApply: false
+---
+
+# 后端开发规范
+
+## 异步优先
+
+所有数据库操作必须使用异步模式：
+
+```python
+# ✅ 正确
+async def get_user(db: AsyncSession, user_id: str):
+    result = await db.execute(select(User).where(User.id == user_id))
+    return result.scalar_one_or_none()
+
+# ❌ 错误 - 同步操作
+def get_user(db: Session, user_id: str):
+    return db.query(User).filter(User.id == user_id).first()
+```
+
+## API 路由模式
+
+```python
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from ...database import get_db
+from ...api.deps import get_current_user
+
+router = APIRouter()
+
+@router.get("/items", response_model=list[ItemResponse])
+async def list_items(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取列表 - 需要认证"""
+    result = await db.execute(select(Item).where(Item.user_id == current_user.id))
+    return result.scalars().all()
+```
+
+## 错误处理
+
+使用 HTTPException 返回标准错误：
+
+```python
+if not item:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="项目不存在")
+```
+
+## 模型定义
+
+- 使用 UUID 字符串作为主键
+- 包含 created_at 和 updated_at 时间戳
+- 在 `models/__init__.py` 中导出新模型

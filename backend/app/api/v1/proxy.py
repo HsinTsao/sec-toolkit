@@ -8,7 +8,7 @@ import httpx
 import re
 from app.modules.proxy import proxy_manager, ProxyConfig
 
-router = APIRouter(tags=["proxy"])
+router = APIRouter()
 
 
 # ==================== 请求模型 ====================

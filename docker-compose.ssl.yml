@@ -1,8 +1,6 @@
 # Docker Compose HTTPS 覆盖配置
 # 使用方法: docker compose -f docker-compose.yml -f docker-compose.ssl.yml up -d
 
-version: '3.8'
-
 services:
   # 后端 API (HTTPS)
   backend:

@@ -203,6 +203,7 @@ class FunctionTool(BaseTool):
                 error_msg = result.split("错误:", 1)[1].strip()
                 return ToolResult.fail(error_msg or result)
             elif isinstance(result, dict) and "error" in result:
+                logger.warning(f"工具 {self.name} 返回错误: {result['error']}")
                 return ToolResult.fail(result["error"])
             else:
                 return ToolResult.ok(result)

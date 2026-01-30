@@ -16,7 +16,7 @@ from ...models.poc_rule import PocRule
 from ...api.deps import get_current_user
 from ...models import User
 
-router = APIRouter(tags=["callback"])
+router = APIRouter()
 
 
 # ==================== Schemas ====================

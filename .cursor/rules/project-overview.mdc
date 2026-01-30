@@ -1,0 +1,40 @@
+---
+description: SecToolkit 项目概述和通用规范
+alwaysApply: true
+---
+
+# SecToolkit 项目规范
+
+## 项目概述
+
+SecToolkit 是一个个人安全工具库，提供编码/解码、哈希计算、加密解密、JWT 工具、网络工具等功能。
+
+## 技术栈
+
+- **后端**: FastAPI + SQLAlchemy (异步) + SQLite
+- **前端**: React 18 + TypeScript + TailwindCSS + Zustand
+- **API 客户端**: 使用 openapi-ts 自动生成
+
+## 项目结构
+
+```
+sec-toolkit/
+├── backend/app/          # FastAPI 后端
+│   ├── api/v1/           # API 路由
+│   ├── models/           # SQLAlchemy 模型
+│   ├── schemas/          # Pydantic schemas
+│   ├── modules/          # 工具模块实现
+│   └── utils/            # 工具函数
+├── frontend/src/         # React 前端
+│   ├── features/         # 功能页面
+│   ├── components/       # 可复用组件
+│   ├── stores/           # Zustand 状态
+│   └── api/generated/    # 自动生成的 API 客户端
+└── docker-compose.yml    # Docker 部署
+```
+
+## 通用规范
+
+1. **语言**: 所有注释、文档、提交信息使用中文
+2. **API 变更后**: 运行 `npm run generate-api` 重新生成前端 API 客户端
+3. **不要创建**: 不必要的文档文件、测试文件，除非明确要求

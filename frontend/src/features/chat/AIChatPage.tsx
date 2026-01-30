@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, memo } from 'react'
 import { 
   Send, 
   Settings, 
@@ -25,12 +25,65 @@ import {
 import { useLLMStore, type ChatMessage } from '@/stores/llmStore'
 import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
-import { notesApi } from '@/lib/api'
+import { notesApi, llmApi } from '@/lib/api'
 import { useAuthStore } from '@/stores/authStore'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
+
+// ==================== 性能优化：节流更新 ====================
+/**
+ * 创建节流函数，用于限制流式消息更新频率
+ * 约 60fps (16ms) 更新一次，避免频繁渲染
+ */
+function createThrottledUpdater() {
+  let pendingContent = ''
+  let timer: number | null = null
+  let lastUpdateTime = 0
+  const THROTTLE_MS = 16 // ~60fps
+  
+  return {
+    update: (
+      sessionId: string,
+      messageId: string,
+      content: string,
+      updateFn: (sessionId: string, messageId: string, content: string) => void
+    ) => {
+      pendingContent = content
+      const now = Date.now()
+      
+      // 如果距离上次更新超过节流时间，立即更新
+      if (now - lastUpdateTime >= THROTTLE_MS) {
+        updateFn(sessionId, messageId, pendingContent)
+        lastUpdateTime = now
+        return
+      }
+      
+      // 否则设置定时器延迟更新
+      if (!timer) {
+        timer = window.setTimeout(() => {
+          updateFn(sessionId, messageId, pendingContent)
+          lastUpdateTime = Date.now()
+          timer = null
+        }, THROTTLE_MS - (now - lastUpdateTime))
+      }
+    },
+    // 强制刷新（流结束时调用）
+    flush: (
+      sessionId: string,
+      messageId: string,
+      content: string,
+      updateFn: (sessionId: string, messageId: string, content: string) => void
+    ) => {
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
+      updateFn(sessionId, messageId, content)
+    }
+  }
+}
 
 export default function AIChatPage() {
   const { token } = useAuthStore()
@@ -59,9 +112,14 @@ export default function AIChatPage() {
   const [knowledgeSources, setKnowledgeSources] = useState<string[]>(['note', 'bookmark', 'file'])
   const [lastSources, setLastSources] = useState<RAGSource[]>([])
   const [showChatSidebar, setShowChatSidebar] = useState(false) // 移动端会话列表
+  const [useFastMode, setUseFastMode] = useState(true) // 快速模式（省 Token）
+  const [lastTokensUsed, setLastTokensUsed] = useState<number | null>(null) // 上次 Token 消耗
   const [isMobileView, setIsMobileView] = useState(false)
+  const [userLocation, setUserLocation] = useState<string | null>(null) // 用户位置
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null) // 当前流式输出的消息ID
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const throttledUpdater = useRef(createThrottledUpdater()) // 节流更新器
   
   // 监听窗口大小变化
   useEffect(() => {
@@ -89,6 +147,29 @@ interface RAGSource {
   
   const currentSession = getCurrentSession()
   const currentProvider = getCurrentProvider()
+  
+  // 获取用户位置（通过 IP 地理位置 API）
+  useEffect(() => {
+    const fetchLocation = async () => {
+      try {
+        // 使用免费的 IP 地理位置 API
+        const response = await fetch('https://ipapi.co/json/')
+        if (response.ok) {
+          const data = await response.json()
+          // 优先使用城市名，其次使用地区名
+          const location = data.city || data.region || data.country_name
+          if (location) {
+            setUserLocation(location)
+            console.log('[Location] 获取到用户位置:', location)
+          }
+        }
+      } catch (error) {
+        console.warn('[Location] 获取位置失败:', error)
+        // 失败时使用默认位置
+      }
+    }
+    fetchLocation()
+  }, [])
   
   // 加载提供商和配置
   useEffect(() => {
@@ -148,9 +229,30 @@ interface RAGSource {
   
   // 复制消息
   const copyMessage = async (content: string, id: string) => {
-    await navigator.clipboard.writeText(content)
-    setCopiedId(id)
-    setTimeout(() => setCopiedId(null), 2000)
+    try {
+      await navigator.clipboard.writeText(content)
+      setCopiedId(id)
+      toast.success('已复制到剪贴板')
+      setTimeout(() => setCopiedId(null), 2000)
+    } catch (error) {
+      console.error('复制失败:', error)
+      // 降级方案：使用 execCommand
+      try {
+        const textArea = document.createElement('textarea')
+        textArea.value = content
+        textArea.style.position = 'fixed'
+        textArea.style.left = '-9999px'
+        document.body.appendChild(textArea)
+        textArea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textArea)
+        setCopiedId(id)
+        toast.success('已复制到剪贴板')
+        setTimeout(() => setCopiedId(null), 2000)
+      } catch {
+        toast.error('复制失败，请手动选择复制')
+      }
+    }
   }
   
   // 保存到笔记
@@ -191,7 +293,8 @@ interface RAGSource {
       return
     }
     
-    if (!config.api_key_set && config.provider_id !== 'ollama') {
+    // 使用系统默认时不需要检查 api_key_set
+    if (!config.use_system_default && !config.api_key_set && config.provider_id !== 'ollama') {
       toast.error('请先配置 API Key')
       setShowSettings(true)
       return
@@ -214,7 +317,13 @@ interface RAGSource {
     // 添加助手消息占位
     addMessage(sessionId, { role: 'assistant', content: '' })
     
+    // 获取刚添加的助手消息ID，用于标记流式输出状态
+    const session = useLLMStore.getState().sessions.find(s => s.id === sessionId)
+    const assistantMsgId = session?.messages[session.messages.length - 1]?.id || null
+    setStreamingMessageId(assistantMsgId)
+    
     setIsLoading(true)
+    setLastTokensUsed(null)
     
     try {
       // 获取历史消息（只保留 user/assistant/system 类型，过滤掉可能存在的无效消息）
@@ -225,7 +334,55 @@ interface RAGSource {
           content: m.content,
         }))
       
-      // 使用流式 API（支持 RAG）
+      // ============ 快速模式：双 LLM 架构（省 Token）============
+      // 快速模式可在任何时候使用，适合编码/解码/哈希等简单操作
+      // 注意：快速模式是无状态的，不使用历史记录
+      if (useFastMode) {
+        const fastResponse = await fetch('/api/llm/fast/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            message: userMessage,
+            mode: 'auto',
+            skip_summary: false,
+            context: userLocation ? {
+              location: userLocation,
+              timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            } : undefined,
+          }),
+        })
+        
+        if (fastResponse.ok) {
+          const fastResult = await fastResponse.json()
+          
+          // 如果不需要 fallback，直接返回结果
+          if (!fastResult.fallback_needed && fastResult.content) {
+            setLastTokensUsed(fastResult.tokens_estimated)
+            
+            // 更新消息
+            const session = useLLMStore.getState().sessions.find(s => s.id === sessionId)
+            const lastMsg = session?.messages[session.messages.length - 1]
+            if (lastMsg && lastMsg.role === 'assistant') {
+              // 添加模式标记
+              const modeTag = fastResult.rule_matched ? '⚡' : '🚀'
+              const toolInfo = fastResult.tool_used ? ` (${fastResult.tool_used})` : ''
+              const tokenInfo = fastResult.tokens_estimated === 0 ? '0 tokens (规则匹配)' : `~${fastResult.tokens_estimated} tokens`
+              updateMessage(sessionId, lastMsg.id, `${fastResult.content}\n\n---\n_${modeTag} 快速模式${toolInfo} · ${tokenInfo}_`)
+            }
+            // 快速模式完成，清除状态
+            setIsLoading(false)
+            setStreamingMessageId(null)
+            return
+          }
+          // 需要 fallback（复杂问题），自动切换到完整模式
+          console.log('[FastMode] Fallback to full mode:', fastResult.fallback_needed)
+        }
+      }
+      
+      // ============ 完整模式：流式 API（支持 RAG）============
       const response = await fetch('/api/llm/chat/stream', {
         method: 'POST',
         headers: {
@@ -248,19 +405,29 @@ interface RAGSource {
       
       // 流式读取
       const reader = response.body?.getReader()
+      if (!reader) {
+        throw new Error('无法读取响应流')
+      }
+      
       const decoder = new TextDecoder()
       let content = ''
+      let buffer = ''
       
-      while (reader) {
-        const { done, value } = await reader.read()
-        if (done) break
-        
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n').filter(line => line.trim() !== '')
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6)
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || '' // 保留最后一个不完整的行
+          
+          for (const line of lines) {
+            const trimmedLine = line.trim()
+            if (!trimmedLine || !trimmedLine.startsWith('data: ')) continue
+            
+            const data = trimmedLine.slice(6)
+            if (!data) continue
             
             try {
               const json = JSON.parse(data)
@@ -275,28 +442,36 @@ interface RAGSource {
               }
               
               if (json.done) {
-                continue
+                break
               }
               
               if (json.content) {
                 content += json.content
                 
-                // 更新消息
+                // 使用节流更新消息（减少渲染频率）
                 const session = useLLMStore.getState().sessions.find(s => s.id === sessionId)
                 const lastMsg = session?.messages[session.messages.length - 1]
                 if (lastMsg && lastMsg.role === 'assistant') {
-                  updateMessage(sessionId, lastMsg.id, content)
+                  throttledUpdater.current.update(sessionId, lastMsg.id, content, updateMessage)
                 }
               }
             } catch (e) {
-              if (e instanceof SyntaxError) {
-                // 忽略 JSON 解析错误
-              } else {
+              if (!(e instanceof SyntaxError)) {
                 throw e
               }
+              // 忽略 JSON 解析错误
             }
           }
         }
+        
+        // 流结束后，强制刷新最终内容
+        const finalSession = useLLMStore.getState().sessions.find(s => s.id === sessionId)
+        const finalMsg = finalSession?.messages[finalSession.messages.length - 1]
+        if (finalMsg && finalMsg.role === 'assistant' && content) {
+          throttledUpdater.current.flush(sessionId, finalMsg.id, content, updateMessage)
+        }
+      } finally {
+        reader.releaseLock()
       }
       
     } catch (error) {
@@ -311,6 +486,7 @@ interface RAGSource {
       }
     } finally {
       setIsLoading(false)
+      setStreamingMessageId(null) // 清除流式输出标记
     }
   }
   
@@ -360,14 +536,14 @@ interface RAGSource {
             </div>
           ) : (
             sessions.map(session => (
-              <button
+              <div
                 key={session.id}
                 onClick={() => {
                   setCurrentSession(session.id)
                   if (isMobileView) setShowChatSidebar(false)
                 }}
                 className={cn(
-                  'w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors group',
+                  'w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm transition-colors group cursor-pointer',
                   currentSessionId === session.id
                     ? 'bg-theme-primary/20 text-theme-primary'
                     : 'hover:bg-theme-bg text-theme-muted hover:text-theme-text'
@@ -386,7 +562,7 @@ interface RAGSource {
                 >
                   <Trash2 className="w-3 h-3" />
                 </button>
-              </button>
+              </div>
             ))
           )}
         </div>
@@ -420,11 +596,12 @@ interface RAGSource {
         {currentSession ? (
           <>
             {/* 消息列表 */}
-            <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 scroll-smooth">
               {currentSession.messages.map((message) => (
                 <MessageBubble
                   key={message.id}
                   message={message}
+                  isStreaming={streamingMessageId === message.id}
                   onCopy={() => copyMessage(message.content, message.id)}
                   isCopied={copiedId === message.id}
                   onSaveToNote={message.role === 'assistant' ? () => saveToNote(message.content, message.id) : undefined}
@@ -536,10 +713,31 @@ interface RAGSource {
                       })}
                     </div>
                   )}
+                  
+                  {/* 快速模式开关 */}
+                  <button
+                    onClick={() => setUseFastMode(!useFastMode)}
+                    className={cn(
+                      'flex items-center gap-1 lg:gap-1.5 px-2 py-1 rounded transition-colors',
+                      useFastMode 
+                        ? 'bg-yellow-500/20 text-yellow-500' 
+                        : 'text-theme-muted hover:text-theme-text'
+                    )}
+                    title={useFastMode 
+                      ? '快速模式 ON：使用双 LLM 架构，Token 消耗降低 60-70%。适合编码/解码/哈希/网络查询' 
+                      : '快速模式 OFF：使用完整 Tool Calling 模式'
+                    }
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">快速</span> {useFastMode ? '⚡' : 'OFF'}
+                  </button>
                 </div>
                 
-                {/* 模型信息 */}
-                <div className="text-theme-muted truncate">
+                {/* 模型信息和 Token 消耗 */}
+                <div className="flex items-center gap-2 text-theme-muted truncate">
+                  {lastTokensUsed !== null && (
+                    <span className="text-yellow-500 text-xs">~{lastTokensUsed} tokens</span>
+                  )}
                   {currentProvider?.icon} <span className="hidden sm:inline">{config?.model || '未配置'}</span>
                 </div>
               </div>
@@ -698,20 +896,24 @@ function CodeBlock({
   )
 }
 
-// 消息气泡组件
-function MessageBubble({ 
-  message, 
-  onCopy, 
-  isCopied,
-  onSaveToNote,
-  isSaving
-}: { 
+// 消息气泡组件（使用 memo 优化）
+interface MessageBubbleProps {
   message: ChatMessage
+  isStreaming?: boolean
   onCopy: () => void
   isCopied: boolean
   onSaveToNote?: () => void
   isSaving?: boolean
-}) {
+}
+
+const MessageBubble = memo(function MessageBubble({ 
+  message, 
+  isStreaming = false,
+  onCopy, 
+  isCopied,
+  onSaveToNote,
+  isSaving
+}: MessageBubbleProps) {
   const isUser = message.role === 'user'
   
   return (
@@ -739,6 +941,11 @@ function MessageBubble({
         )}>
           {isUser ? (
             <p className="whitespace-pre-wrap break-words">{message.content}</p>
+          ) : isStreaming ? (
+            // 流式输出时使用简化渲染
+            <div className="prose prose-invert prose-sm max-w-none break-words prose-p:text-theme-text">
+              <p className="whitespace-pre-wrap">{message.content || '...'}</p>
+            </div>
           ) : (
             <div className="prose prose-invert prose-sm max-w-none break-words 
               prose-headings:text-theme-text prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2
@@ -822,7 +1029,7 @@ function MessageBubble({
         </div>
         
         {/* 消息操作按钮 */}
-        {message.content && (
+        {message.content && !isStreaming && (
           <div className="flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
               onClick={onCopy}
@@ -856,7 +1063,15 @@ function MessageBubble({
       </div>
     </div>
   )
-}
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.message.id === nextProps.message.id &&
+    prevProps.message.content === nextProps.message.content &&
+    prevProps.isStreaming === nextProps.isStreaming &&
+    prevProps.isCopied === nextProps.isCopied &&
+    prevProps.isSaving === nextProps.isSaving
+  )
+})
 
 // 设置弹窗组件
 function SettingsModal({
@@ -866,12 +1081,22 @@ function SettingsModal({
 }) {
   const { providers, config, updateConfig } = useLLMStore()
   
+  // 系统默认配置
+  const [defaultConfig, setDefaultConfig] = useState<{
+    available: boolean
+    provider_id: string | null
+    provider_name?: string
+    model: string | null
+    models: string[]
+  } | null>(null)
+  
   // 本地表单状态
   const [formData, setFormData] = useState({
-    provider_id: config?.provider_id || 'deepseek',
+    provider_id: config?.provider_id || 'qwen',
     api_key: '',
     base_url: config?.base_url || '',
     model: config?.model || '',
+    use_system_default: config?.use_system_default || false,
   })
   const [showApiKey, setShowApiKey] = useState(false)
   const [useCustomModel, setUseCustomModel] = useState(false)
@@ -882,6 +1107,19 @@ function SettingsModal({
   
   const currentProvider = providers.find(p => p.id === formData.provider_id)
   
+  // 加载系统默认配置
+  useEffect(() => {
+    const loadDefaultConfig = async () => {
+      try {
+        const { data } = await llmApi.getDefaultConfig()
+        setDefaultConfig(data)
+      } catch {
+        setDefaultConfig({ available: false, provider_id: null, model: null, models: [] })
+      }
+    }
+    loadDefaultConfig()
+  }, [])
+  
   // 初始化表单
   useEffect(() => {
     if (config) {
@@ -890,15 +1128,19 @@ function SettingsModal({
         api_key: '', // 不显示实际的 API Key
         base_url: config.base_url || '',
         model: config.model,
+        use_system_default: config.use_system_default || false,
       })
     }
   }, [config])
   
   // 合并预定义模型和动态获取的模型
-  const availableModels = [
-    ...(currentProvider?.models || []),
-    ...fetchedModels.filter(m => !currentProvider?.models.includes(m))
-  ]
+  // 如果使用系统默认，显示系统默认的模型列表
+  const availableModels = formData.use_system_default && defaultConfig?.available
+    ? defaultConfig.models
+    : [
+        ...(currentProvider?.models || []),
+        ...fetchedModels.filter(m => !currentProvider?.models.includes(m))
+      ]
   
   // 切换提供商
   const handleProviderChange = (providerId: string) => {
@@ -995,8 +1237,9 @@ function SettingsModal({
       return
     }
     
-    // 如果没有保存过 API Key 且不是 Ollama，需要填写
-    if (!config?.api_key_set && !formData.api_key && formData.provider_id !== 'ollama') {
+    // 如果使用系统默认，不需要检查 API Key
+    // 如果没有使用系统默认，且没有保存过 API Key 且不是 Ollama，需要填写
+    if (!formData.use_system_default && !config?.api_key_set && !formData.api_key && formData.provider_id !== 'ollama') {
       toast.error('请填写 API Key')
       return
     }
@@ -1004,14 +1247,15 @@ function SettingsModal({
     setIsSaving(true)
     try {
       await updateConfig({
-        provider_id: formData.provider_id,
-        api_key: formData.api_key || undefined, // 只有填写了才更新
-        base_url: formData.base_url,
+        provider_id: formData.use_system_default && defaultConfig?.provider_id ? defaultConfig.provider_id : formData.provider_id,
+        api_key: formData.use_system_default ? undefined : (formData.api_key || undefined),
+        base_url: formData.use_system_default ? undefined : formData.base_url,
         model: formData.model,
+        use_system_default: formData.use_system_default,
       })
       toast.success('配置已保存')
       onClose()
-    } catch (error) {
+    } catch {
       // 错误已在 store 中处理
     } finally {
       setIsSaving(false)
@@ -1029,8 +1273,47 @@ function SettingsModal({
         </div>
         
         <div className="space-y-4">
+          {/* 使用系统默认选项 */}
+          {defaultConfig?.available && (
+            <div className="p-4 rounded-lg border border-theme-border bg-theme-bg/50">
+              <label className="flex items-center justify-between cursor-pointer">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">使用系统默认配置</span>
+                    <span className="text-xs px-2 py-0.5 rounded bg-theme-primary/20 text-theme-primary">
+                      {defaultConfig.provider_name}
+                    </span>
+                  </div>
+                  <p className="text-xs text-theme-muted mt-1">
+                    使用管理员预配置的 API Key，无需自行设置
+                  </p>
+                </div>
+                <div 
+                  onClick={() => {
+                    const useDefault = !formData.use_system_default
+                    setFormData({
+                      ...formData,
+                      use_system_default: useDefault,
+                      // 如果切换到使用系统默认，自动选择系统默认的模型
+                      model: useDefault && defaultConfig?.model ? defaultConfig.model : formData.model,
+                    })
+                  }}
+                  className={cn(
+                    'w-12 h-6 rounded-full transition-colors cursor-pointer relative',
+                    formData.use_system_default ? 'bg-theme-primary' : 'bg-theme-border'
+                  )}
+                >
+                  <div className={cn(
+                    'absolute top-1 w-4 h-4 rounded-full bg-white transition-transform',
+                    formData.use_system_default ? 'translate-x-7' : 'translate-x-1'
+                  )} />
+                </div>
+              </label>
+            </div>
+          )}
+          
           {/* 提供商选择 */}
-          <div>
+          <div className={formData.use_system_default ? 'opacity-50 pointer-events-none' : ''}>
             <label className="block text-sm text-theme-muted mb-2">选择服务商</label>
             <div className="grid grid-cols-2 gap-2">
               {providers.map(provider => (
@@ -1054,7 +1337,8 @@ function SettingsModal({
             </div>
           </div>
           
-          {/* API Key */}
+          {/* API Key - 使用系统默认时隐藏 */}
+          {!formData.use_system_default && (
           <div>
             <label className="block text-sm text-theme-muted mb-2">
               API Key 
@@ -1083,8 +1367,10 @@ function SettingsModal({
               </button>
             </div>
           </div>
+          )}
           
-          {/* Base URL */}
+          {/* Base URL - 使用系统默认时隐藏 */}
+          {!formData.use_system_default && (
           <div>
             <label className="block text-sm text-theme-muted mb-2">API 地址</label>
             <input
@@ -1095,11 +1381,14 @@ function SettingsModal({
               className="w-full"
             />
           </div>
+          )}
           
           {/* 模型选择 */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm text-theme-muted">模型</label>
+              {/* 使用系统默认时不显示获取模型按钮 */}
+              {!formData.use_system_default && (
               <div className="flex items-center gap-2">
                 <button
                   onClick={fetchModels}
@@ -1123,6 +1412,7 @@ function SettingsModal({
                   手动输入
                 </button>
               </div>
+              )}
             </div>
             
             {useCustomModel ? (
@@ -1139,24 +1429,33 @@ function SettingsModal({
                 onChange={(e) => setFormData({ ...formData, model: e.target.value })}
                 className="w-full"
               >
-                {/* 预定义模型 */}
-                {currentProvider && currentProvider.models.length > 0 && (
-                  <optgroup label="推荐模型">
-                    {currentProvider.models.map(model => (
-                      <option key={model} value={model}>{model}</option>
-                    ))}
-                  </optgroup>
-                )}
-                {/* 动态获取的模型 */}
-                {fetchedModels.length > 0 && (
-                  <optgroup label="从 API 获取">
-                    {fetchedModels
-                      .filter(m => !currentProvider?.models.includes(m))
-                      .map(model => (
-                        <option key={model} value={model}>{model}</option>
-                      ))
-                    }
-                  </optgroup>
+                {/* 使用系统默认时，直接显示系统默认的模型列表 */}
+                {formData.use_system_default ? (
+                  availableModels.map(model => (
+                    <option key={model} value={model}>{model}</option>
+                  ))
+                ) : (
+                  <>
+                    {/* 预定义模型 */}
+                    {currentProvider && currentProvider.models.length > 0 && (
+                      <optgroup label="推荐模型">
+                        {currentProvider.models.map(model => (
+                          <option key={model} value={model}>{model}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {/* 动态获取的模型 */}
+                    {fetchedModels.length > 0 && (
+                      <optgroup label="从 API 获取">
+                        {fetchedModels
+                          .filter(m => !currentProvider?.models.includes(m))
+                          .map(model => (
+                            <option key={model} value={model}>{model}</option>
+                          ))
+                        }
+                      </optgroup>
+                    )}
+                  </>
                 )}
               </select>
             ) : (

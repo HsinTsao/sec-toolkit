@@ -1,0 +1,49 @@
+---
+description: 服务启动和重启指南
+alwaysApply: true
+---
+
+# 服务启动指南
+
+## 启动脚本
+
+**必须使用 `start.sh` 脚本**，不要直接运行 uvicorn 或 vite。
+
+```bash
+cd /code/sec-toolkit
+./start.sh <命令>
+```
+
+## 常用命令
+
+| 命令 | 说明 |
+|------|------|
+| `./start.sh dev` | 后台启动（开发模式，热重载） |
+| `./start.sh run` | 前台启动（推荐，可看日志） |
+| `./start.sh lite` | 低内存模式（无热重载） |
+| `./start.sh stop` | 停止服务 |
+| `./start.sh status` | 查看状态 |
+| `./start.sh logs` | 查看日志 |
+
+## 重启服务
+
+```bash
+./start.sh stop && ./start.sh dev
+```
+
+## 代码修改后
+
+- **后端代码修改**：`dev` 模式自动热重载，无需手动重启
+- **Intent Prompt 修改**：需要重启服务
+- **前端代码修改**：`dev` 模式自动热重载
+
+## 端口
+
+- 前端: http://localhost:80
+- 后端: http://localhost:8000
+- API 文档: http://localhost:8000/api/docs
+
+## 日志位置
+
+- 后端: `/code/sec-toolkit/data/backend.log`
+- 前端: `/code/sec-toolkit/data/frontend.log`

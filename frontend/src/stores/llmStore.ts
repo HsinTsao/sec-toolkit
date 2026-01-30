@@ -2,6 +2,19 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { llmApi, type LLMProvider, type LLMConfig } from '@/lib/api'
 
+// 兼容性 UUID 生成函数
+const generateUUID = (): string => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID()
+  }
+  // Fallback for non-secure contexts
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 // 聊天消息
 export interface ChatMessage {
   id: string
@@ -108,7 +121,7 @@ export const useLLMStore = create<LLMState>()(
       currentSessionId: null,
       
       createSession: () => {
-        const id = crypto.randomUUID()
+        const id = generateUUID()
         const session: ChatSession = {
           id,
           title: '新对话',
@@ -143,7 +156,7 @@ export const useLLMStore = create<LLMState>()(
                 ...session,
                 messages: [...session.messages, {
                   ...message,
-                  id: crypto.randomUUID(),
+                  id: generateUUID(),
                   timestamp: Date.now(),
                 }],
                 updatedAt: Date.now(),

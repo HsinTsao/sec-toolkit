@@ -2,6 +2,9 @@
 #
 # 配置方式: 复制 env.example 为 .env 并编辑
 # 所有 .env 中的配置会自动传递给后端容器
+#
+# 启动命令: docker compose up -d
+# 查看日志: docker compose logs -f
 
 services:
   # 后端 API
@@ -17,14 +20,29 @@ services:
       - ./data:/app/data
     env_file:
       - .env
+    environment:
+      - LOG_FILE=/app/data/backend.log
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 10s
-      timeout: 5s
+      interval: 30s
+      timeout: 10s
       retries: 5
-      start_period: 10s
+      start_period: 30s
     networks:
       - toolkit-network
+    # 资源限制（根据服务器配置调整）
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    # 日志配置（防止日志无限增长）
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
 
   # 前端
   frontend:
@@ -40,12 +58,23 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:80"]
-      interval: 10s
+      interval: 30s
       timeout: 5s
       retries: 5
-      start_period: 5s
+      start_period: 10s
     networks:
       - toolkit-network
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   toolkit-network:
