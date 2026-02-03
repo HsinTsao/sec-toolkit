@@ -138,7 +138,7 @@ export const notesApi = {
   createNote: (data: { title: string; content?: string; category_id?: string; tag_ids?: string[] }) =>
     api.post('/notes', data),
   updateNote: (id: string, data: { title?: string; content?: string; category_id?: string; tag_ids?: string[] }) =>
-    api.patch(`/notes/${id}`, data),
+    api.post(`/notes/${id}/update`, data),  // 使用 POST 替代 PATCH，兼容某些网络环境
   deleteNote: (id: string) => api.delete(`/notes/${id}`),
 }
 

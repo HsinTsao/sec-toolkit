@@ -41,3 +41,6 @@ jieba>=0.42.1
 
 # 网络搜索（duckduckgo_search 已重命名为 ddgs）
 ddgs>=9.0.0
+
+# 股票数据（AKShare - 开源免费金融数据接口）
+akshare>=1.12.0

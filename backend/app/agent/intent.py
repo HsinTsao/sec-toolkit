@@ -32,6 +32,7 @@ class IntentCategory(str, Enum):
     NETWORK = "network"        # 网络查询
     SEARCH = "search"          # 网络搜索（需要联网查询实时信息）
     BROWSER = "browser"        # 浏览器操作
+    FINANCE = "finance"        # 股票/基金分析
     ANALYZE = "analyze"        # 安全分析（需要完整 LLM）
     CHAT = "chat"              # 普通聊天（fallback 到完整 LLM）
 
@@ -57,7 +58,8 @@ INTENT_SYSTEM_PROMPT_TEMPLATE = """你是意图分类器。分析用户输入，
 3. 哈希/MD5/SHA → calculate_hash 工具
 4. DNS/WHOIS/IP查询 → 网络工具
 5. 搜索/新闻/价格 → web_search 或 news_search
-6. 只有纯聊天时才返回 chat
+6. 股票/基金/行情/股价/K线 → 股票分析工具（analyze_stock, get_stock_quote 等）
+7. 只有纯聊天时才返回 chat
 
 ## 可用工具
 {tools_table}
@@ -84,6 +86,21 @@ INTENT_SYSTEM_PROMPT_TEMPLATE = """你是意图分类器。分析用户输入，
 
 输入: "最新的 AI 新闻"
 输出: {{"category": "search", "tool": "news_search", "params": {{"query": "AI 新闻"}}}}
+
+输入: "分析一下贵州茅台"
+输出: {{"category": "finance", "tool": "analyze_stock", "params": {{"symbol": "600519", "market": "A"}}}}
+
+输入: "600519 行情"
+输出: {{"category": "finance", "tool": "get_stock_quote", "params": {{"symbol": "600519", "market": "A"}}}}
+
+输入: "比亚迪的技术指标"
+输出: {{"category": "finance", "tool": "get_technical_indicators", "params": {{"symbol": "002594", "market": "A"}}}}
+
+输入: "腾讯控股最新新闻"
+输出: {{"category": "finance", "tool": "get_stock_news", "params": {{"keyword": "00700"}}}}
+
+输入: "搜索平安银行"
+输出: {{"category": "finance", "tool": "search_stock", "params": {{"keyword": "平安银行", "market": "A"}}}}
 
 输入: "你好"
 输出: {{"category": "chat", "tool": null, "params": {{}}}}
@@ -113,6 +130,14 @@ def build_intent_system_prompt() -> str:
         "weather",      # 天气查询最常用
         "web_search",   # 网络搜索
         "news_search",  # 新闻搜索
+        # 股票分析工具
+        "analyze_stock",  # 综合分析（最常用）
+        "get_stock_quote",  # 实时行情
+        "search_stock",  # 搜索股票
+        "get_technical_indicators",  # 技术指标
+        "get_stock_finance",  # 财务数据
+        "get_stock_news",  # 股票新闻
+        # 编码/哈希/网络
         "base64_encode", "base64_decode",
         "url_encode", "url_decode",
         "calculate_hash",
@@ -175,14 +200,21 @@ INTENT_SYSTEM_PROMPT = None  # 将在首次使用时动态设置
 INTENT_USER_TEMPLATE = "用户输入: {user_input}"
 
 
-# 结果总结 Prompt（约 100 tokens）
-SUMMARY_SYSTEM_PROMPT = """简洁总结工具执行结果，用中文回复。格式清晰，重点突出。"""
+# 结果总结 Prompt
+SUMMARY_SYSTEM_PROMPT = """你是数据展示助手。将工具结果转为用户友好的格式。
+
+规则：
+1. 股票分析：数据已预格式化，直接美化输出，用Markdown加粗关键数据，保持结构
+2. 搜索/新闻：列出要点
+3. 编码/哈希：简洁展示
+4. 中文回复，不要重复输入内容"""
 
 SUMMARY_USER_TEMPLATE = """工具: {tool_name}
-输入: {input_text}
-结果: {result}
+参数: {input_text}
+数据:
+{result}
 
-用 1-2 句话回复用户:"""
+美化输出（保持数据完整）:"""
 
 
 # ==================== 极简规则匹配（只用于 100% 确定的场景）====================
@@ -350,6 +382,13 @@ TOOL_CATEGORY_MAP = {
     "browser_screenshot": IntentCategory.BROWSER,
     "browser_get_content": IntentCategory.BROWSER,
     "browser_execute_js": IntentCategory.BROWSER,
+    # 股票/基金分析
+    "search_stock": IntentCategory.FINANCE,
+    "get_stock_quote": IntentCategory.FINANCE,
+    "get_stock_finance": IntentCategory.FINANCE,
+    "get_stock_news": IntentCategory.FINANCE,
+    "get_technical_indicators": IntentCategory.FINANCE,
+    "analyze_stock": IntentCategory.FINANCE,
 }
 
 
@@ -383,5 +422,12 @@ def get_tool_display_name(tool_name: str) -> str:
         "browser_screenshot": "网页截图",
         "browser_get_content": "获取网页内容",
         "browser_execute_js": "执行 JavaScript",
+        # 股票/基金分析
+        "search_stock": "搜索股票",
+        "get_stock_quote": "股票行情",
+        "get_stock_finance": "财务数据",
+        "get_stock_news": "股票新闻",
+        "get_technical_indicators": "技术指标",
+        "analyze_stock": "综合分析",
     }
     return TOOL_NAMES.get(tool_name, tool_name)

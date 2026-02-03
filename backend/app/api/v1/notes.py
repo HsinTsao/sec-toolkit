@@ -293,6 +293,7 @@ async def create_note(
 
 
 @router.patch("/{note_id}", response_model=NoteResponse)
+@router.post("/{note_id}/update", response_model=NoteResponse)  # POST 别名，兼容某些网络环境
 async def update_note(
     note_id: str,
     note_in: NoteUpdate,

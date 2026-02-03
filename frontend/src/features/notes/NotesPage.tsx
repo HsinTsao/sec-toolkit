@@ -139,6 +139,7 @@ export default function NotesPage() {
   // 更新笔记
   const updateMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: { title?: string; content?: string; is_pinned?: boolean; category_id?: string | null } }) => {
+      console.log('[updateMutation] 发送请求:', { id, dataSize: JSON.stringify(data).length })
       const response = await notesApi.updateNote(id, {
         ...data,
         category_id: data.category_id || undefined,
@@ -149,7 +150,10 @@ export default function NotesPage() {
       queryClient.invalidateQueries({ queryKey: ['notes'] })
       toast.success('已保存', { duration: 1500 })
     },
-    onError: () => toast.error('更新失败'),
+    onError: (error) => {
+      console.error('[updateMutation] 错误:', error)
+      toast.error(`更新失败: ${error instanceof Error ? error.message : '未知错误'}`)
+    },
   })
   
   // 静默更新笔记（不关闭编辑器，用于自动保存场景）

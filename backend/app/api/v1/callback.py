@@ -813,6 +813,63 @@ def replace_variables(content: str, request: Request, client_ip: str, token: str
     return content
 
 
+def get_client_ip(request: Request) -> str:
+    """
+    从请求中获取真实客户端 IP
+    
+    按优先级检查以下头（考虑不同代理/CDN 的情况）：
+    1. CF-Connecting-IP - Cloudflare
+    2. X-Real-IP - Nginx 常用配置
+    3. True-Client-IP - Akamai, Cloudflare Enterprise
+    4. X-Client-IP - 某些代理
+    5. X-Forwarded-For - 最常见，取第一个 IP
+    6. request.client.host - 直接连接 IP（可能是代理 IP）
+    """
+    import logging
+    logger = logging.getLogger("app.callback")
+    
+    # 调试：打印所有可能的 IP 相关头
+    ip_headers = ['CF-Connecting-IP', 'X-Real-IP', 'True-Client-IP', 
+                  'X-Client-IP', 'X-Forwarded-For', 'Forwarded',
+                  'X-Original-Forwarded-For', 'X-Originating-IP']
+    found_headers = {h: request.headers.get(h) for h in ip_headers if request.headers.get(h)}
+    client_host = request.client.host if request.client else None
+    logger.info(f"[IP Debug] client.host={client_host}, headers={found_headers}")
+    
+    # 按优先级检查各种代理头
+    proxy_headers = [
+        'CF-Connecting-IP',      # Cloudflare
+        'X-Real-IP',             # Nginx
+        'True-Client-IP',        # Akamai, Cloudflare Enterprise
+        'X-Client-IP',           # 某些代理
+    ]
+    
+    for header in proxy_headers:
+        value = request.headers.get(header)
+        if value:
+            # 某些情况下可能有多个 IP，取第一个
+            ip = value.split(',')[0].strip()
+            if ip:
+                logger.info(f"[IP Debug] 使用 {header}: {ip}")
+                return ip
+    
+    # X-Forwarded-For 特殊处理（格式：client, proxy1, proxy2）
+    forwarded = request.headers.get('X-Forwarded-For')
+    if forwarded:
+        ip = forwarded.split(',')[0].strip()
+        if ip:
+            logger.info(f"[IP Debug] 使用 X-Forwarded-For: {ip}")
+            return ip
+    
+    # 兜底：直接连接的 IP
+    if request.client and request.client.host:
+        logger.info(f"[IP Debug] 使用 client.host: {request.client.host}")
+        return request.client.host
+    
+    logger.warning("[IP Debug] 无法获取客户端 IP，返回 unknown")
+    return 'unknown'
+
+
 async def handle_callback(request: Request, token: str, path: str, db: AsyncSession):
     """处理回调请求 - 始终记录所有请求"""
     # 查找 token
@@ -827,11 +884,8 @@ async def handle_callback(request: Request, token: str, path: str, db: AsyncSess
     # 过期的 token 仍然记录请求
     is_expired = db_token.expires_at and db_token.expires_at < datetime.utcnow()
     
-    # 获取请求信息
-    client_ip = request.client.host if request.client else None
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        client_ip = forwarded.split(",")[0].strip()
+    # 获取真实客户端 IP
+    client_ip = get_client_ip(request)
     
     # 读取请求体
     try:

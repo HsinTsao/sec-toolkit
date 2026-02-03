@@ -492,18 +492,18 @@ interface RAGSource {
   
   // 计算高度：视口高度 - header(64px) - statusbar(24px) - padding(24px上 + 48px下)
   return (
-    <div className="flex animate-fadeIn -m-4 lg:-m-6 -mb-12" style={{ height: 'calc(100vh - 56px - 24px)', minHeight: 0 }}>
-      {/* 移动端遮罩层 */}
+    <div className="flex animate-fadeIn -m-4 lg:-m-6 -mb-12 overflow-hidden" style={{ height: 'calc(100vh - 56px - 24px)', minHeight: 0, maxWidth: '100vw' }}>
+      {/* 移动端遮罩层 - z-index 低于系统侧边栏(z-50)，高于对话列表(z-30) */}
       {isMobileView && showChatSidebar && (
         <div 
-          className="fixed inset-0 bg-black/50 z-40 md:hidden"
+          className="fixed inset-0 bg-black/50 z-20"
           onClick={() => setShowChatSidebar(false)}
         />
       )}
       
       {/* 左侧会话列表 - 移动端抽屉式，桌面端固定显示 */}
       <div className={cn(
-        "bg-theme-card border-r border-theme-border flex flex-col flex-shrink-0 z-50",
+        "bg-theme-card border-r border-theme-border flex flex-col flex-shrink-0 z-30",
         // 移动端样式
         isMobileView 
           ? "fixed inset-y-0 left-0 w-64 transition-transform duration-300"
@@ -592,7 +592,7 @@ interface RAGSource {
       </div>
       
       {/* 右侧聊天区域 - 独立滚动 */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {currentSession ? (
           <>
             {/* 消息列表 */}
@@ -801,15 +801,14 @@ interface RAGSource {
                 '帮我分析这段代码的安全问题',
                 '生成 SQL 注入测试 payload',
                 '解释 XSS 漏洞原理',
-                '分析这个 HTTP 请求',
-                '帮我理解这个漏洞',
-                '生成 CSRF PoC',
               ].map((prompt) => (
                 <button
                   key={prompt}
                   onClick={() => {
+                    createSession()
                     setInput(prompt)
-                    inputRef.current?.focus()
+                    // 延迟聚焦，等待会话创建和输入框渲染
+                    setTimeout(() => inputRef.current?.focus(), 100)
                   }}
                   className="p-2.5 lg:p-3 text-sm text-left rounded-lg bg-theme-card border border-theme-border hover:border-theme-primary/50 transition-colors"
                 >
@@ -858,7 +857,7 @@ function CodeBlock({
   }
   
   return (
-    <div className="relative group/code my-3">
+    <div className="relative group/code my-3 overflow-hidden">
       {/* 语言标签和复制按钮 */}
       <div className="flex items-center justify-between px-4 py-2 bg-[#1e1e1e] rounded-t-lg border-b border-gray-700">
         <span className="text-xs text-gray-400 font-mono">{language || 'text'}</span>
@@ -879,19 +878,22 @@ function CodeBlock({
           )}
         </button>
       </div>
-      <SyntaxHighlighter
-        style={vscDarkPlus}
-        language={language || 'text'}
-        PreTag="div"
-        customStyle={{
-          margin: 0,
-          borderRadius: '0 0 0.5rem 0.5rem',
-          fontSize: '0.875rem',
-          padding: '1rem',
-        }}
-      >
-        {children}
-      </SyntaxHighlighter>
+      <div className="overflow-x-auto">
+        <SyntaxHighlighter
+          style={vscDarkPlus}
+          language={language || 'text'}
+          PreTag="div"
+          customStyle={{
+            margin: 0,
+            borderRadius: '0 0 0.5rem 0.5rem',
+            fontSize: '0.875rem',
+            padding: '1rem',
+            minWidth: 'min-content',
+          }}
+        >
+          {children}
+        </SyntaxHighlighter>
+      </div>
     </div>
   )
 }
@@ -930,11 +932,11 @@ const MessageBubble = memo(function MessageBubble({
       </div>
       
       <div className={cn(
-        'flex-1 max-w-3xl group min-w-0',
+        'flex-1 max-w-3xl group min-w-0 overflow-hidden',
         isUser && 'flex flex-col items-end'
       )}>
         <div className={cn(
-          'rounded-lg px-4 py-3 overflow-hidden',
+          'rounded-lg px-4 py-3 overflow-hidden max-w-full',
           isUser 
             ? 'bg-theme-secondary/20 border border-theme-secondary/30 text-theme-text' 
             : 'bg-theme-card border border-theme-border'
@@ -947,7 +949,7 @@ const MessageBubble = memo(function MessageBubble({
               <p className="whitespace-pre-wrap">{message.content || '...'}</p>
             </div>
           ) : (
-            <div className="prose prose-invert prose-sm max-w-none break-words 
+            <div className="prose prose-invert prose-sm max-w-none break-words overflow-hidden
               prose-headings:text-theme-text prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2
               prose-p:text-theme-text prose-p:leading-relaxed prose-p:my-2
               prose-a:text-theme-primary prose-a:no-underline hover:prose-a:underline
@@ -957,7 +959,7 @@ const MessageBubble = memo(function MessageBubble({
               prose-table:border-collapse prose-th:bg-theme-bg prose-th:px-3 prose-th:py-2 prose-th:border prose-th:border-theme-border
               prose-td:px-3 prose-td:py-2 prose-td:border prose-td:border-theme-border
               prose-hr:border-theme-border
-              prose-pre:bg-transparent prose-pre:p-0 prose-pre:m-0"
+              prose-pre:bg-transparent prose-pre:p-0 prose-pre:m-0 prose-pre:overflow-x-auto"
             >
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}

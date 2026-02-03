@@ -23,6 +23,7 @@ from .network import register_network_tools
 
 from .browser import register_browser_tools
 from .search import register_search_tools
+from .stock import register_stock_tools
 
 
 def register_builtin_tools() -> None:
@@ -32,6 +33,7 @@ def register_builtin_tools() -> None:
     register_network_tools(tool_registry)
     register_browser_tools(tool_registry)
     register_search_tools(tool_registry)
+    register_stock_tools(tool_registry)
 
 
 __all__ = ["register_builtin_tools"]

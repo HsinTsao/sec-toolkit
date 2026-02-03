@@ -48,11 +48,24 @@ export default defineConfig(({ mode }) => {
           target: apiTarget,
           changeOrigin: true,
           secure: false, // 允许自签名证书
+          timeout: 60000, // 60 秒超时
+          configure: (proxy) => {
+            proxy.on('error', (err, req, res) => {
+              console.error('[Proxy Error]', err.message)
+            })
+            proxy.on('proxyReq', (proxyReq, req) => {
+              // 确保 Content-Length 正确传递
+              if (req.headers['content-length']) {
+                proxyReq.setHeader('Content-Length', req.headers['content-length'])
+              }
+            })
+          },
         },
         '/c': {
           target: apiTarget,
           changeOrigin: true,
           secure: false,
+          timeout: 60000,
         },
       },
     },

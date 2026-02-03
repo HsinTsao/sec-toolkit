@@ -428,6 +428,78 @@ class DualLLMAgent:
             logger.error(f"🧠 [IntentLLM] 调用异常: {e}, 耗时={elapsed:.0f}ms", exc_info=True)
             return ParsedIntent(category=IntentCategory.CHAT, raw_input=user_input)
     
+    def _format_stock_analysis(self, data: dict) -> str:
+        """将股票分析数据格式化为精简文本（节省 token）"""
+        lines = []
+        
+        # 行情
+        quote = data.get("quote", {})
+        if quote and "error" not in quote:
+            lines.append(f"## {quote.get('name', '')}({quote.get('code', '')})")
+            lines.append(f"价格:{quote.get('price', 0)}元 涨跌:{quote.get('change_percent', 0):+.2f}%")
+            if quote.get('industry'):
+                lines.append(f"行业:{quote.get('industry')}")
+        
+        # 财务（精简格式）
+        finance = data.get("finance", {})
+        if finance and "error" not in finance:
+            items = []
+            if finance.get("roe"): items.append(f"ROE:{finance['roe']:.1f}%")
+            if finance.get("gross_margin"): items.append(f"毛利率:{finance['gross_margin']:.1f}%")
+            if finance.get("net_margin"): items.append(f"净利率:{finance['net_margin']:.1f}%")
+            if finance.get("profit_growth"): items.append(f"利润增长:{finance['profit_growth']:+.1f}%")
+            if finance.get("debt_ratio"): items.append(f"负债率:{finance['debt_ratio']:.1f}%")
+            if items:
+                lines.append(f"财务: {' | '.join(items)}")
+        
+        # 技术指标（精简格式）
+        tech = data.get("technical", {})
+        indicators = tech.get("indicators", {})
+        if indicators:
+            items = []
+            if indicators.get("MA5"): items.append(f"MA5:{indicators['MA5']:.1f}")
+            if indicators.get("MA20"): items.append(f"MA20:{indicators['MA20']:.1f}")
+            macd = indicators.get("MACD", {})
+            if macd: items.append(f"MACD:{'金叉' if macd.get('dif',0) > macd.get('dea',0) else '死叉'}")
+            kdj = indicators.get("KDJ", {})
+            if kdj and kdj.get("j"): items.append(f"KDJ-J:{kdj['j']:.0f}")
+            if indicators.get("RSI"): items.append(f"RSI:{indicators['RSI']:.0f}")
+            if items:
+                lines.append(f"技术: {' | '.join(items)}")
+        
+        # 趋势
+        trend = tech.get("trend", {})
+        if trend:
+            trend_items = []
+            if trend.get("macd_signal"): trend_items.append(trend["macd_signal"])
+            if trend.get("kdj_signal"): trend_items.append(trend["kdj_signal"])
+            if trend.get("rsi_signal"): trend_items.append(trend["rsi_signal"])
+            if trend_items:
+                lines.append(f"信号: {', '.join(trend_items)}")
+        
+        # 投资建议
+        suggestion = data.get("suggestion", {})
+        if suggestion:
+            lines.append(f"建议: {suggestion.get('overall', '观望')} (技术:{suggestion.get('technical_score', 50)}分 基本面:{suggestion.get('fundamental_score', 50)}分)")
+            if suggestion.get("reasons"):
+                lines.append(f"利好: {'; '.join(suggestion['reasons'][:3])}")
+            if suggestion.get("risks"):
+                lines.append(f"风险: {'; '.join(suggestion['risks'][:3])}")
+        
+        # 新闻（只取标题）
+        news = data.get("news", {})
+        news_list = news.get("news", [])
+        if news_list:
+            lines.append("新闻:")
+            for n in news_list[:3]:
+                title = n.get("title", "")[:40]
+                lines.append(f"- {title}...")
+        
+        # 免责声明
+        lines.append("\n⚠️ 以上分析仅供参考，不构成投资建议。")
+        
+        return "\n".join(lines)
+    
     async def _call_summary_llm(self, intent: ParsedIntent, tool_result: ToolResult) -> str:
         """调用 Summary LLM 总结结果"""
         import time
@@ -436,11 +508,22 @@ class DualLLMAgent:
         
         logger.debug(f"📝 [SummaryLLM] 开始调用: model={model}, tool={intent.tool}")
         
-        # 格式化结果
-        if tool_result.success:
-            result_text = json.dumps(tool_result.data, ensure_ascii=False, indent=2)
-            if len(result_text) > 1000:
-                result_text = result_text[:1000] + "\n...(结果已截断)"
+        max_result_len = 2000
+        max_tokens = 600
+        
+        # 股票分析类工具：使用专门的格式化函数
+        if intent.tool == "analyze_stock" and tool_result.success:
+            result_text = self._format_stock_analysis(tool_result.data)
+            max_tokens = 800
+        elif intent.tool in ("get_stock_finance", "get_technical_indicators") and tool_result.success:
+            result_text = json.dumps(tool_result.data, ensure_ascii=False, indent=1)
+            if len(result_text) > 2500:
+                result_text = result_text[:2500] + "..."
+            max_tokens = 700
+        elif tool_result.success:
+            result_text = json.dumps(tool_result.data, ensure_ascii=False, indent=1)
+            if len(result_text) > max_result_len:
+                result_text = result_text[:max_result_len] + "..."
         else:
             result_text = f"错误: {tool_result.error}"
         
@@ -464,7 +547,7 @@ class DualLLMAgent:
                 json={
                     "model": model,
                     "messages": messages,
-                    "max_tokens": 300,
+                    "max_tokens": max_tokens,
                     "temperature": 0.3,
                 },
             )

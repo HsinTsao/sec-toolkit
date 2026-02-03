@@ -27,6 +27,7 @@ from ...schemas.knowledge import (
 )
 from ...models import UserLLMConfig
 from ...utils import fetch_webpage_meta, build_summary_from_meta, SSRFError
+from ...config import settings
 from ..deps import get_current_user
 
 router = APIRouter(prefix="/knowledge", tags=["知识库"])
@@ -537,7 +538,26 @@ async def generate_summary(
     )
     llm_config = config_result.scalar_one_or_none()
     
-    if not llm_config or not llm_config.api_key:
+    # 确定使用的 API Key、Base URL 和模型
+    api_key = None
+    base_url = None
+    model = None
+    
+    if llm_config:
+        if llm_config.use_system_default:
+            # 使用系统默认配置
+            if not settings.DEFAULT_LLM_API_KEY:
+                raise HTTPException(status_code=400, detail="系统默认 LLM 未配置")
+            api_key = settings.DEFAULT_LLM_API_KEY
+            base_url = settings.DEFAULT_LLM_BASE_URL or llm_config.base_url
+            model = llm_config.model or settings.DEFAULT_LLM_MODEL
+        else:
+            # 使用用户自己的配置
+            api_key = llm_config.api_key
+            base_url = llm_config.base_url
+            model = llm_config.model
+    
+    if not api_key:
         raise HTTPException(status_code=400, detail="请先配置 LLM API Key")
     
     success = 0
@@ -566,7 +586,7 @@ async def generate_summary(
                 summary = build_summary_from_meta(item.title, item.url, meta)
                 
                 # 如果 meta 信息足够丰富，直接使用；否则尝试用 AI 生成
-                if not summary and llm_config:
+                if not summary and api_key:
                     # 用 meta 信息让 AI 生成摘要
                     meta_content = f"""
 网站标题: {meta.get('title') or item.title}
@@ -577,9 +597,9 @@ URL: {item.url}
                     summary = await generate_summary_with_llm(
                         title=item.title,
                         content=meta_content,
-                        api_key=llm_config.api_key,
-                        base_url=llm_config.base_url,
-                        model=llm_config.model,
+                        api_key=api_key,
+                        base_url=base_url,
+                        model=model,
                     )
             
             # 笔记/文件类型：使用内容生成摘要
@@ -587,9 +607,9 @@ URL: {item.url}
                 summary = await generate_summary_with_llm(
                     title=item.title,
                     content=item.content,
-                    api_key=llm_config.api_key,
-                    base_url=llm_config.base_url,
-                    model=llm_config.model,
+                    api_key=api_key,
+                    base_url=base_url,
+                    model=model,
                 )
             else:
                 results.append({"id": item_id, "success": False, "error": "内容为空且无法抓取"})
