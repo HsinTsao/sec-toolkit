@@ -15,8 +15,20 @@ from ...models.callback import CallbackToken, CallbackRecord
 from ...models.poc_rule import PocRule
 from ...api.deps import get_current_user
 from ...models import User
+from ...config import settings
 
 router = APIRouter()
+
+
+def get_callback_url(path: str) -> str:
+    """
+    生成回调 URL
+    如果配置了 CALLBACK_BASE_URL，返回完整 URL；否则返回相对路径
+    """
+    if settings.CALLBACK_BASE_URL:
+        base = settings.CALLBACK_BASE_URL.rstrip('/')
+        return f"{base}{path}"
+    return path
 
 
 # ==================== Schemas ====================
@@ -102,7 +114,7 @@ async def create_token(
         id=db_token.id,
         token=db_token.token,
         name=db_token.name,
-        url=f"/c/{db_token.token}",
+        url=get_callback_url(f"/c/{db_token.token}"),
         created_at=db_token.created_at,
         expires_at=db_token.expires_at,
         is_active=bool(db_token.is_active),
@@ -133,7 +145,7 @@ async def list_tokens(
             id=t.id,
             token=t.token,
             name=t.name,
-            url=f"/c/{t.token}",
+            url=get_callback_url(f"/c/{t.token}"),
             created_at=t.created_at,
             expires_at=t.expires_at,
             is_active=bool(t.is_active),
@@ -209,7 +221,7 @@ async def renew_token(
         id=token.id,
         token=token.token,
         name=token.name,
-        url=f"/c/{token.token}",
+        url=get_callback_url(f"/c/{token.token}"),
         created_at=token.created_at,
         expires_at=token.expires_at,
         is_active=bool(token.is_active),
@@ -672,7 +684,7 @@ async def create_poc_rule(
         response_headers=rule.response_headers, redirect_url=rule.redirect_url,
         delay_ms=rule.delay_ms, enable_variables=bool(rule.enable_variables),
         is_active=bool(rule.is_active), hit_count=rule.hit_count,
-        url=f"/c/{token.token}/p/{rule.name}", created_at=rule.created_at
+        url=get_callback_url(f"/c/{token.token}/p/{rule.name}"), created_at=rule.created_at
     )
 
 
@@ -703,7 +715,7 @@ async def list_poc_rules(
         response_body=r.response_body, response_headers=r.response_headers,
         redirect_url=r.redirect_url, delay_ms=r.delay_ms,
         enable_variables=bool(r.enable_variables), is_active=bool(r.is_active),
-        hit_count=r.hit_count, url=f"/c/{token.token}/p/{r.name}", created_at=r.created_at
+        hit_count=r.hit_count, url=get_callback_url(f"/c/{token.token}/p/{r.name}"), created_at=r.created_at
     ) for r in rules]
 
 
@@ -749,7 +761,7 @@ async def update_poc_rule(
         response_headers=rule.response_headers, redirect_url=rule.redirect_url,
         delay_ms=rule.delay_ms, enable_variables=bool(rule.enable_variables),
         is_active=bool(rule.is_active), hit_count=rule.hit_count,
-        url=f"/c/{token.token}/p/{rule.name}", created_at=rule.created_at
+        url=get_callback_url(f"/c/{token.token}/p/{rule.name}"), created_at=rule.created_at
     )
 
 
@@ -794,7 +806,7 @@ def replace_variables(content: str, request: Request, client_ip: str, token: str
         '{{path}}': str(request.url.path),
         '{{host}}': request.headers.get('host', 'unknown'),
         '{{user_agent}}': request.headers.get('user-agent', 'unknown'),
-        '{{callback_url}}': f"/c/{token}",
+        '{{callback_url}}': get_callback_url(f"/c/{token}"),
         '{{attacker_ip}}': 'ATTACKER_IP',  # 占位符，用户需自行替换
         '{{attacker_port}}': '4444',  # 默认端口
     }
@@ -825,17 +837,6 @@ def get_client_ip(request: Request) -> str:
     5. X-Forwarded-For - 最常见，取第一个 IP
     6. request.client.host - 直接连接 IP（可能是代理 IP）
     """
-    import logging
-    logger = logging.getLogger("app.callback")
-    
-    # 调试：打印所有可能的 IP 相关头
-    ip_headers = ['CF-Connecting-IP', 'X-Real-IP', 'True-Client-IP', 
-                  'X-Client-IP', 'X-Forwarded-For', 'Forwarded',
-                  'X-Original-Forwarded-For', 'X-Originating-IP']
-    found_headers = {h: request.headers.get(h) for h in ip_headers if request.headers.get(h)}
-    client_host = request.client.host if request.client else None
-    logger.info(f"[IP Debug] client.host={client_host}, headers={found_headers}")
-    
     # 按优先级检查各种代理头
     proxy_headers = [
         'CF-Connecting-IP',      # Cloudflare
@@ -850,7 +851,6 @@ def get_client_ip(request: Request) -> str:
             # 某些情况下可能有多个 IP，取第一个
             ip = value.split(',')[0].strip()
             if ip:
-                logger.info(f"[IP Debug] 使用 {header}: {ip}")
                 return ip
     
     # X-Forwarded-For 特殊处理（格式：client, proxy1, proxy2）
@@ -858,15 +858,12 @@ def get_client_ip(request: Request) -> str:
     if forwarded:
         ip = forwarded.split(',')[0].strip()
         if ip:
-            logger.info(f"[IP Debug] 使用 X-Forwarded-For: {ip}")
             return ip
     
     # 兜底：直接连接的 IP
     if request.client and request.client.host:
-        logger.info(f"[IP Debug] 使用 client.host: {request.client.host}")
         return request.client.host
     
-    logger.warning("[IP Debug] 无法获取客户端 IP，返回 unknown")
     return 'unknown'
 
 

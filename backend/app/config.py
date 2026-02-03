@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     SUMMARY_LLM_MODEL: Optional[str] = None  # Summary LLM 模型
     DUAL_LLM_ENABLED: bool = True  # 是否启用双 LLM 模式
     
+    # OOB 回调服务配置
+    # 设置公网可访问的基础 URL，用于生成完整的回调地址
+    # 例如: http://36.151.151.24:9000 或 https://oob.example.com
+    CALLBACK_BASE_URL: Optional[str] = None
+    
     class Config:
         env_file = str(_env_file) if _env_file else ".env"
         case_sensitive = True
