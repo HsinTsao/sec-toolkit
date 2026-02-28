@@ -497,22 +497,27 @@ async def chat_stream(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """聊天接口（流式，支持 RAG）"""
+    """聊天接口（流式，支持 RAG，支持 Trace）"""
     import time
+    import uuid
     start_time = time.time()
+    trace_id = str(uuid.uuid4())[:8]
     
     logger.info(f"💬 [Chat] 开始处理: user={current_user.username}, message={request.message[:50]}..., use_knowledge={request.use_knowledge}")
     
     config = await get_user_llm_config(current_user.id, db)
     logger.debug(f"💬 [Chat] LLM配置: model={config.model}")
     
-    # RAG 检索
+    # RAG 检索相关变量
     sources: List[RAGSource] = []
     system_prompt = BASE_SYSTEM_PROMPT
+    rag_time_ms = 0
+    rag_results_count = 0
     
     print(f"🔍 [Chat] 用户={current_user.username}, 知识库={request.use_knowledge}, 来源类型={request.knowledge_sources}")
     
     if request.use_knowledge:
+        rag_start = time.time()
         # 搜索知识库
         knowledge_items = await search_knowledge_base(
             user_id=current_user.id,
@@ -521,6 +526,8 @@ async def chat_stream(
             limit=request.max_results,
             db=db,
         )
+        rag_time_ms = (time.time() - rag_start) * 1000
+        rag_results_count = len(knowledge_items)
         
         print(f"📚 [Chat] 知识库检索结果: {len(knowledge_items)} 条")
         
@@ -543,6 +550,56 @@ async def chat_stream(
     messages.append({"role": "user", "content": request.message})
     
     async def generate() -> AsyncGenerator[str, None]:
+        nonlocal rag_time_ms, rag_results_count
+        llm_start_time = time.time() * 1000
+        full_content = ""
+        
+        # 发送 trace 开始事件
+        yield f"data: {json.dumps({'stage': 'trace_start', 'data': {'trace_id': trace_id}})}\n\n"
+        
+        # 如果启用了 RAG，发送 RAG trace 事件
+        if request.use_knowledge:
+            rag_trace = {
+                'stage': 'trace',
+                'data': {
+                    'id': 'rag_' + trace_id,
+                    'type': 'rag_query',
+                    'name': 'RAG 知识检索',
+                    'stage': 'end',
+                    'timestamp': time.time() * 1000,
+                    'duration_ms': round(rag_time_ms, 2),
+                    'data': {
+                        'input': request.message[:100],
+                        'output': '检索到 ' + str(rag_results_count) + ' 条相关知识',
+                        'sources': [s.title for s in sources]
+                    },
+                    'metadata': {
+                        'source_types': request.knowledge_sources,
+                        'max_results': request.max_results
+                    }
+                }
+            }
+            yield f"data: {json.dumps(rag_trace)}\n\n"
+        
+        # 发送 LLM 调用开始事件
+        llm_start_trace = {
+            'stage': 'trace',
+            'data': {
+                'id': 'llm_' + trace_id,
+                'type': 'llm_call',
+                'name': 'LLM 生成回复',
+                'stage': 'start',
+                'timestamp': llm_start_time,
+                'data': {'input': request.message[:200]},
+                'metadata': {
+                    'model': config.model,
+                    'has_rag': request.use_knowledge,
+                    'history_count': len(request.history)
+                }
+            }
+        }
+        yield f"data: {json.dumps(llm_start_trace)}\n\n"
+        
         # 先发送来源信息
         if sources:
             yield f"data: {json.dumps({'sources': [s.model_dump() for s in sources]})}\n\n"
@@ -565,23 +622,80 @@ async def chat_stream(
                 if response.status_code != 200:
                     error_text = await response.aread()
                     yield f"data: {json.dumps({'error': error_text.decode()})}\n\n"
+                    # 发送错误 trace 事件
+                    error_trace = {
+                        'stage': 'trace',
+                        'data': {
+                            'id': 'llm_' + trace_id,
+                            'type': 'llm_call',
+                            'name': 'LLM 生成回复',
+                            'stage': 'end',
+                            'timestamp': time.time() * 1000,
+                            'duration_ms': round(time.time() * 1000 - llm_start_time, 2),
+                            'data': {
+                                'input': request.message[:200],
+                                'output': '错误: ' + error_text.decode()[:100]
+                            },
+                            'metadata': {'model': config.model, 'error': True}
+                        }
+                    }
+                    yield f"data: {json.dumps(error_trace)}\n\n"
                     return
                 
                 async for line in response.aiter_lines():
                     if line.startswith("data: "):
                         data = line[6:]
                         if data == "[DONE]":
+                            # 发送 LLM 调用结束事件
+                            llm_duration = time.time() * 1000 - llm_start_time
+                            output_text = full_content[:300]
+                            if len(full_content) > 300:
+                                output_text += '...'
+                            llm_end_trace = {
+                                'stage': 'trace',
+                                'data': {
+                                    'id': 'llm_' + trace_id,
+                                    'type': 'llm_call',
+                                    'name': 'LLM 生成回复',
+                                    'stage': 'end',
+                                    'timestamp': time.time() * 1000,
+                                    'duration_ms': round(llm_duration, 2),
+                                    'data': {
+                                        'input': request.message[:200],
+                                        'output': output_text
+                                    },
+                                    'metadata': {
+                                        'model': config.model,
+                                        'output_length': len(full_content)
+                                    }
+                                }
+                            }
+                            yield f"data: {json.dumps(llm_end_trace)}\n\n"
                             yield f"data: {json.dumps({'done': True})}\n\n"
                             break
                         try:
                             chunk = json.loads(data)
                             content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
                             if content:
+                                full_content += content
                                 yield f"data: {json.dumps({'content': content})}\n\n"
                         except json.JSONDecodeError:
                             pass
                                 
         except Exception as e:
+            # 发送错误 trace 事件
+            exc_trace = {
+                'stage': 'trace',
+                'data': {
+                    'id': 'error_' + trace_id,
+                    'type': 'error',
+                    'name': '请求错误',
+                    'stage': 'end',
+                    'timestamp': time.time() * 1000,
+                    'data': {'error': str(e)}
+                }
+            }
+            yield f"data: {json.dumps(exc_trace)}\n\n"
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
     
     return StreamingResponse(
@@ -916,12 +1030,20 @@ class UserContext(BaseModel):
     language: Optional[str] = Field(default="zh-CN", description="用户语言")
 
 
+class ChatHistoryMessage(BaseModel):
+    """对话历史消息"""
+    role: str = Field(..., description="角色: user/assistant")
+    content: str = Field(..., description="消息内容")
+
+
 class FastChatRequest(BaseModel):
     """快速聊天请求（双 LLM 模式）"""
     message: str = Field(..., description="用户消息")
     mode: str = Field(default="auto", description="模式: auto/fast/full")
     skip_summary: bool = Field(default=False, description="跳过 Summary LLM")
     context: Optional[UserContext] = Field(default=None, description="用户上下文信息")
+    skill_ids: Optional[List[str]] = Field(default=None, description="激活的 Skill ID 列表")
+    history: Optional[List[ChatHistoryMessage]] = Field(default=None, description="对话历史（最近几轮）")
 
 
 class FastChatResponse(BaseModel):
@@ -1054,9 +1176,24 @@ async def fast_chat_stream(
     mode = mode_map.get(request.mode, AgentMode.AUTO)
     
     async def generate() -> AsyncGenerator[str, None]:
+        # 导入上下文管理器
+        from ...agent.context import AgentContextManager
+        
         try:
-            async for event in agent.process_stream(request.message, mode=mode):
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            # 转换历史消息格式
+            history = None
+            if request.history:
+                history = [{"role": msg.role, "content": msg.content} for msg in request.history]
+            
+            # 设置 Agent 上下文（让工具可以访问用户ID和数据库）
+            async with AgentContextManager(user_id=current_user.id, db_session=db):
+                async for event in agent.process_stream(
+                    request.message, 
+                    mode=mode, 
+                    skill_ids=request.skill_ids,
+                    history=history
+                ):
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         except Exception as e:
             logger.exception("Fast chat stream error")
             yield f"data: {json.dumps({'stage': 'error', 'data': str(e)})}\n\n"

@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ToolCard, ToolOutput, ToolButton, ToolSelect } from '@/components/ui/ToolCard'
+import IpMap from '@/components/IpMap'
 import { toolsApi } from '@/lib/api'
 import { useToolStore } from '@/stores/toolStore'
 import toast from 'react-hot-toast'
@@ -41,7 +43,9 @@ interface AnalyzeResult {
 
 export default function NetworkTools() {
   const { addRecentTool } = useToolStore()
-  
+  const [searchParams] = useSearchParams()
+  const lastAutoQRef = useRef<string | null>(null)
+
   // 一键分析
   const [analyzeInput, setAnalyzeInput] = useState('')
   const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null)
@@ -59,9 +63,32 @@ export default function NetworkTools() {
   // IP 查询
   const [ipAddress, setIpAddress] = useState('')
   const [ipResult, setIpResult] = useState('')
+  const [ipInfoData, setIpInfoData] = useState<{ lat: number; lon: number; ip?: string; city?: string } | null>(null)
   
   const [loading, setLoading] = useState(false)
-  
+  const [myIpLoading, setMyIpLoading] = useState(false)
+
+  // 从 URL ?q= 自动执行查询（如从 OOB 卡片点击 IP 跳转）
+  useEffect(() => {
+    const q = searchParams.get('q')?.trim()
+    if (q && q !== lastAutoQRef.current) {
+      lastAutoQRef.current = q
+      setAnalyzeInput(q)
+      const timer = setTimeout(() => {
+        setAnalyzeLoading(true)
+        setAnalyzeResult(null)
+        toolsApi.analyzeTarget(q)
+          .then(({ data }) => {
+            setAnalyzeResult(data)
+            addRecentTool('network')
+          })
+          .catch(() => toast.error('分析失败'))
+          .finally(() => setAnalyzeLoading(false))
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [searchParams, addRecentTool])
+
   // 一键分析
   const handleAnalyze = async () => {
     if (!analyzeInput.trim()) {
@@ -289,6 +316,7 @@ export default function NetworkTools() {
       
       if (data.error) {
         setIpResult(`错误: ${data.error}`)
+        setIpInfoData(null)
       } else {
         let result = `IP: ${data.ip}\n`
         result += `国家: ${data.country} (${data.country_code})\n`
@@ -301,10 +329,16 @@ export default function NetworkTools() {
         if (data.org) result += `组织: ${data.org}\n`
         if (data.as) result += `AS: ${data.as}\n`
         setIpResult(result)
+        setIpInfoData(
+          data.lat != null && data.lon != null
+            ? { lat: data.lat, lon: data.lon, ip: data.ip, city: data.city }
+            : null
+        )
       }
       addRecentTool('network')
     } catch {
       toast.error('查询失败')
+      setIpInfoData(null)
     } finally {
       setLoading(false)
     }
@@ -339,15 +373,63 @@ export default function NetworkTools() {
             </p>
           </div>
           
-          <ToolButton onClick={handleAnalyze} loading={analyzeLoading}>
-            🔍 开始分析
-          </ToolButton>
+          <div className="flex gap-2">
+            <ToolButton onClick={handleAnalyze} loading={analyzeLoading}>
+              🔍 开始分析
+            </ToolButton>
+            <button
+              onClick={async () => {
+                setMyIpLoading(true)
+                try {
+                  const { data } = await toolsApi.myLocation()
+                  if (data?.ip) {
+                    setAnalyzeInput(data.ip)
+                    setAnalyzeLoading(true)
+                    setAnalyzeResult(null)
+                    const res = await toolsApi.analyzeTarget(data.ip)
+                    setAnalyzeResult(res.data)
+                    addRecentTool('network')
+                  } else {
+                    toast.error('无法获取当前 IP')
+                  }
+                } catch {
+                  toast.error('获取失败')
+                } finally {
+                  setMyIpLoading(false)
+                  setAnalyzeLoading(false)
+                }
+              }}
+              disabled={myIpLoading || analyzeLoading}
+              className="px-4 py-2 rounded-lg text-sm font-medium border border-theme-border text-theme-text hover:bg-theme-surface-hover transition-colors disabled:opacity-50"
+            >
+              {myIpLoading ? '获取中...' : '📡 分析我的 IP'}
+            </button>
+          </div>
           
           {analyzeResult && (
-            <ToolOutput 
-              label="分析结果" 
-              value={formatAnalyzeResult(analyzeResult)} 
-            />
+            <>
+              {analyzeResult.results?.ip_info?.lat != null && analyzeResult.results?.ip_info?.lon != null && (
+                <div>
+                  <label className="block text-sm text-theme-muted mb-2">📍 地理位置地图</label>
+                  <IpMap
+                    lat={Number(analyzeResult.results.ip_info.lat)}
+                    lon={Number(analyzeResult.results.ip_info.lon)}
+                    label={[
+                      analyzeResult.results.ip_info.ip,
+                      analyzeResult.results.ip_info.city,
+                      analyzeResult.results.ip_info.region,
+                      analyzeResult.results.ip_info.country,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  />
+                </div>
+              )}
+              <ToolOutput 
+                label="分析结果" 
+                value={formatAnalyzeResult(analyzeResult)} 
+              />
+            </>
           )}
         </div>
       </ToolCard>
@@ -425,6 +507,17 @@ export default function NetworkTools() {
           <ToolButton onClick={handleIpLookup} loading={loading}>
             查询
           </ToolButton>
+
+          {ipInfoData && (
+            <div>
+              <label className="block text-sm text-theme-muted mb-2">📍 地理位置地图</label>
+              <IpMap
+                lat={ipInfoData.lat}
+                lon={ipInfoData.lon}
+                label={[ipInfoData.ip, ipInfoData.city].filter(Boolean).join(' · ')}
+              />
+            </div>
+          )}
           
           <ToolOutput label="结果" value={ipResult} />
         </div>

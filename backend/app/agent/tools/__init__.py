@@ -7,6 +7,7 @@
 - 网络查询工具
 - 浏览器工具
 - 搜索工具
+- 记忆工具
 
 使用示例:
     from app.agent.tools import register_builtin_tools
@@ -19,11 +20,10 @@ from ..registry import tool_registry
 from .encoding import register_encoding_tools
 from .hash import register_hash_tools
 from .network import register_network_tools
-
-
 from .browser import register_browser_tools
 from .search import register_search_tools
 from .stock import register_stock_tools
+from .memory import register_memory_tools
 
 
 def register_builtin_tools() -> None:
@@ -34,6 +34,7 @@ def register_builtin_tools() -> None:
     register_browser_tools(tool_registry)
     register_search_tools(tool_registry)
     register_stock_tools(tool_registry)
+    register_memory_tools(tool_registry)
 
 
 __all__ = ["register_builtin_tools"]

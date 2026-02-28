@@ -71,7 +71,8 @@ is_running() {
         frontend) 
             # 优先检查端口，其次检查进程
             (curl -s --max-time 1 http://localhost:$FRONTEND_PORT > /dev/null 2>&1) || \
-            (pgrep -f "vite.*--port" > /dev/null 2>&1)
+            (pgrep -f "vite.*--port" > /dev/null 2>&1) || \
+            (pgrep -f "nginx.*master" > /dev/null 2>&1)
             ;;
     esac
 }
@@ -149,7 +150,11 @@ cmd_stop() {
     
     # 按进程名杀死所有相关进程
     pkill -f "uvicorn.*app.main" 2>/dev/null || true
-    pkill -f "vite.*$FRONTEND_PORT" 2>/dev/null || true
+    pkill -f "vite" 2>/dev/null || true
+    pkill -f "inotifywait.*src" 2>/dev/null || true
+    
+    # 停止 Nginx
+    nginx -s stop 2>/dev/null || true
     
     # 杀死占用端口的进程
     fuser -k $BACKEND_PORT/tcp 2>/dev/null || true
@@ -202,6 +207,11 @@ cmd_dev() {
     echo $! > "$DATA_DIR/backend.pid"
     wait_for_service "backend" 15 && print_success "后端已启动" || { print_error "后端启动失败，查看日志: cat $DATA_DIR/backend.log"; exit 1; }
     
+    # 确保 Nginx 不占用端口（从 lite 模式切回时）
+    nginx -s stop 2>/dev/null || true
+    fuser -k $FRONTEND_PORT/tcp 2>/dev/null || true
+    sleep 1
+    
     # 启动前端
     print_info "启动前端..."
     cd "$FRONTEND_DIR"
@@ -225,6 +235,10 @@ cmd_dev() {
 cmd_lite() {
     local use_ssl=$1
     
+    # 检查依赖
+    command -v nginx &> /dev/null || { print_error "Nginx 未安装，lite 模式需要 Nginx"; exit 1; }
+    command -v inotifywait &> /dev/null || { print_error "inotify-tools 未安装: apt install inotify-tools"; exit 1; }
+    
     # 检查是否已运行
     if is_running "backend" || is_running "frontend"; then
         print_warning "服务已在运行"
@@ -235,36 +249,76 @@ cmd_lite() {
     # 设置环境
     setup_backend
     setup_frontend
-    [ "$use_ssl" = "true" ] && generate_ssl
     
     # SSL 参数
     local ssl_args=""
-    [ "$use_ssl" = "true" ] && ssl_args="--ssl-keyfile=$CERT_DIR/server.key --ssl-certfile=$CERT_DIR/server.crt"
+    [ "$use_ssl" = "true" ] && { generate_ssl; ssl_args="--ssl-keyfile=$CERT_DIR/server.key --ssl-certfile=$CERT_DIR/server.crt"; }
     
-    # 启动后端（无热重载，低内存）
-    print_info "启动后端（低内存模式）..."
+    # 启动后端（热重载）
+    print_info "启动后端..."
     cd "$BACKEND_DIR"
-    nohup ./venv/bin/uvicorn app.main:app --host 0.0.0.0 --port $BACKEND_PORT --workers 1 $ssl_args > "$DATA_DIR/backend.log" 2>&1 &
+    nohup ./venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port $BACKEND_PORT --workers 1 $ssl_args > "$DATA_DIR/backend.log" 2>&1 &
     echo $! > "$DATA_DIR/backend.pid"
-    wait_for_service "backend" 15 && print_success "后端已启动" || { print_error "后端启动失败"; exit 1; }
+    wait_for_service "backend" 15 && print_success "后端已启动（热重载）" || { print_error "后端启动失败"; exit 1; }
     
-    # 启动前端（预览模式，先构建再预览）
+    # 首次构建前端
     print_info "构建前端..."
     cd "$FRONTEND_DIR"
-    npm run build > /dev/null 2>&1
+    npm run build > "$DATA_DIR/frontend-build.log" 2>&1
+    if [ $? -ne 0 ]; then
+        print_error "前端构建失败，查看日志: cat $DATA_DIR/frontend-build.log"
+        exit 1
+    fi
+    print_success "前端构建完成"
     
-    print_info "启动前端（预览模式）..."
-    nohup npx vite preview --host --port $FRONTEND_PORT > "$DATA_DIR/frontend.log" 2>&1 &
-    echo $! > "$DATA_DIR/frontend.pid"
-    wait_for_service "frontend" 10 && print_success "前端已启动" || { print_error "前端启动失败"; exit 1; }
+    # 释放 80 端口
+    fuser -k $FRONTEND_PORT/tcp 2>/dev/null || true
+    sleep 1
+    
+    # 启动 Nginx
+    print_info "启动 Nginx..."
+    ln -sf /etc/nginx/sites-available/sec-toolkit /etc/nginx/sites-enabled/sec-toolkit
+    rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/oob 2>/dev/null
+    nginx -t > /dev/null 2>&1 || { print_error "Nginx 配置检查失败"; nginx -t; exit 1; }
+    nginx > "$DATA_DIR/frontend.log" 2>&1
+    wait_for_service "frontend" 5 && print_success "Nginx 已启动" || { print_error "Nginx 启动失败"; exit 1; }
+    
+    # 启动前端文件监听（自动重建，原子替换避免服务中断）
+    print_info "启动前端文件监听..."
+    nohup bash -c '
+        cd "'"$FRONTEND_DIR"'"
+        LOG="'"$DATA_DIR"'/frontend-watch.log"
+        echo "[$(date)] 开始监听 src/ 目录..." > "$LOG"
+        while true; do
+            inotifywait -r -q -e modify,create,delete --exclude "node_modules|dist|\.git" src/ 2>/dev/null
+            echo "[$(date)] 检测到文件变化，开始构建..." >> "$LOG"
+            sleep 0.5
+            VITE_OUT=dist_tmp npm run build -- --outDir dist_tmp >> "$LOG" 2>&1
+            if [ $? -eq 0 ]; then
+                rm -rf dist_old
+                mv dist dist_old 2>/dev/null
+                mv dist_tmp dist
+                rm -rf dist_old
+                echo "[$(date)] 构建成功 ✓" >> "$LOG"
+            else
+                rm -rf dist_tmp
+                echo "[$(date)] 构建失败 ✗（保留旧版本）" >> "$LOG"
+            fi
+        done
+    ' > /dev/null 2>&1 &
+    echo $! > "$DATA_DIR/watcher.pid"
+    print_success "文件监听已启动"
     
     # 显示信息
     local proto="http"; [ "$use_ssl" = "true" ] && proto="https"
     echo ""
     print_success "启动完成（低内存模式）！"
-    echo -e "  ${GREEN}前端:${NC} ${proto}://localhost"
+    echo -e "  ${GREEN}前端:${NC} ${proto}://localhost （Nginx）"
     echo -e "  ${GREEN}后端:${NC} ${proto}://localhost:${BACKEND_PORT}"
-    echo -e "  ${YELLOW}注意:${NC} 代码修改后需重新执行 ./start.sh lite"
+    echo -e "  ${GREEN}热重载:${NC}"
+    echo -e "    后端: 自动重载"
+    echo -e "    前端: 自动构建，刷新浏览器即可"
+    echo -e "  ${GREEN}监听日志:${NC} cat $DATA_DIR/frontend-watch.log"
 }
 
 cmd_run() {

@@ -4,33 +4,55 @@ import logging.config
 import os
 
 # 日志配置
-# 使用 FileHandler 直接写入文件，避免 uvicorn --reload 子进程 stderr 重定向问题
 LOG_FILE = os.environ.get("LOG_FILE", "/code/sec-toolkit/data/backend.log")
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 
 logging.config.dictConfig({
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
-        "standard": {"format": "%(levelname)s:%(name)s:%(message)s"}
+        "standard": {
+            "format": "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S"
+        },
+        "detailed": {
+            "format": "%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S"
+        }
     },
     "handlers": {
         "file": {
-            "class": "logging.FileHandler",
+            "class": "logging.handlers.RotatingFileHandler",
             "formatter": "standard",
             "filename": LOG_FILE,
-            "mode": "a",
+            "maxBytes": 10 * 1024 * 1024,  # 10MB
+            "backupCount": 5,
             "encoding": "utf-8"
+        },
+        "error_file": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "detailed",
+            "filename": LOG_FILE.replace(".log", ".error.log"),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 5,
+            "encoding": "utf-8",
+            "level": "ERROR"
         }
     },
     "root": {
-        "level": "INFO",
-        "handlers": ["file"]
+        "level": LOG_LEVEL,
+        "handlers": ["file", "error_file"]
     },
     "loggers": {
-        "app": {"level": "INFO"},
-        "httpx": {"level": "INFO"},
+        "app": {"level": LOG_LEVEL},
+        "app.middleware": {"level": LOG_LEVEL},
+        "uvicorn": {"level": "WARNING"},
+        "httpx": {"level": "WARNING"},
+        "sqlalchemy": {"level": "WARNING"},
     }
 })
+
+logger = logging.getLogger("app")
 
 from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -41,48 +63,66 @@ from .config import settings
 from .database import init_db, get_db
 from .api import api_router
 from .api.v1.callback import handle_callback
+from .core.middleware import RequestContextMiddleware, setup_exception_handlers
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
+    logger.info("正在初始化数据库...")
     await init_db()
     
     # 注册 Agent 工具
     from .agent.tools import register_builtin_tools
     register_builtin_tools()
-    print("🛠️ Agent 工具注册完成")
+    logger.info("Agent 工具注册完成")
     
-    print(f"🚀 {settings.APP_NAME} v{settings.APP_VERSION} 启动成功")
+    # 注册预置 Skill
+    from .agent.skill import register_builtin_skills
+    register_builtin_skills()
+    logger.info("预置 Skill 注册完成")
+    
+    logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} 启动成功")
     yield
     # 关闭时
-    print("👋 正在清理资源...")
+    logger.info("正在清理资源...")
     
     # 关闭 LLM HTTP 连接池
     try:
         from .api.v1.llm import close_llm_http_client
         await close_llm_http_client()
+        logger.info("LLM HTTP 客户端已关闭")
     except Exception as e:
-        print(f"⚠️ 关闭 LLM HTTP 客户端失败: {e}")
+        logger.warning(f"关闭 LLM HTTP 客户端失败: {e}")
     
     # 关闭 DualLLM 共享客户端
     try:
         from .agent.dual_llm import cleanup_shared_clients
         await cleanup_shared_clients()
+        logger.info("DualLLM 客户端已关闭")
     except Exception as e:
-        print(f"⚠️ 关闭 DualLLM 客户端失败: {e}")
+        logger.warning(f"关闭 DualLLM 客户端失败: {e}")
     
     # 关闭 Proxy 模块客户端
     try:
         from .modules.proxy import proxy_manager
         if proxy_manager._client and not proxy_manager._client.is_closed:
             await proxy_manager._client.aclose()
-            print("✅ Proxy HTTP 客户端已关闭")
+            logger.info("Proxy HTTP 客户端已关闭")
     except Exception as e:
-        print(f"⚠️ 关闭 Proxy 客户端失败: {e}")
+        logger.warning(f"关闭 Proxy 客户端失败: {e}")
     
-    print("👋 应用关闭完成")
+    # 关闭反弹 Shell 监听和会话
+    try:
+        from .modules.revshell import RevShellManager
+        manager = RevShellManager.get_instance()
+        await manager.cleanup()
+        logger.info("反弹 Shell 资源已清理")
+    except Exception as e:
+        logger.warning(f"清理反弹 Shell 资源失败: {e}")
+    
+    logger.info("应用关闭完成")
 
 
 # 创建应用
@@ -96,14 +136,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS 配置
+# 中间件配置（注意顺序：后添加的先执行）
+# 1. 请求上下文中间件（请求 ID、日志）
+app.add_middleware(RequestContextMiddleware)
+
+# 2. CORS 配置
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID", "X-Response-Time"],
 )
+
+# 设置全局异常处理器
+setup_exception_handlers(app)
 
 # 注册路由
 app.include_router(api_router, prefix="/api")

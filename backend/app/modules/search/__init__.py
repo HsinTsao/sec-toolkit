@@ -13,10 +13,73 @@
 
 import logging
 import re
+import base64
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse, parse_qs, unquote
 
 logger = logging.getLogger(__name__)
+
+
+def _decode_sogou_url(sogou_link: str) -> str:
+    """
+    解析搜狗跳转链接，提取真实 URL
+    
+    搜狗的 /link?url= 参数中包含编码后的真实 URL
+    """
+    try:
+        if "/link?" not in sogou_link:
+            return sogou_link
+        
+        parsed = urlparse(sogou_link)
+        params = parse_qs(parsed.query)
+        
+        if "url" not in params:
+            return sogou_link
+        
+        encoded_url = params["url"][0]
+        
+        # 尝试多种解码方式
+        # 方式1: 直接 URL 解码
+        try:
+            decoded = unquote(encoded_url)
+            if decoded.startswith("http"):
+                return decoded
+        except:
+            pass
+        
+        # 方式2: Base64 解码
+        try:
+            # 补齐 padding
+            padding = 4 - len(encoded_url) % 4
+            if padding != 4:
+                encoded_url_padded = encoded_url + "=" * padding
+            else:
+                encoded_url_padded = encoded_url
+            decoded = base64.b64decode(encoded_url_padded).decode("utf-8")
+            if decoded.startswith("http"):
+                return decoded
+        except:
+            pass
+        
+        # 方式3: URL 安全的 Base64 解码
+        try:
+            padding = 4 - len(encoded_url) % 4
+            if padding != 4:
+                encoded_url_padded = encoded_url + "=" * padding
+            else:
+                encoded_url_padded = encoded_url
+            decoded = base64.urlsafe_b64decode(encoded_url_padded).decode("utf-8")
+            if decoded.startswith("http"):
+                return decoded
+        except:
+            pass
+        
+        # 无法解码，返回原链接
+        return sogou_link
+        
+    except Exception as e:
+        logger.warning(f"[Search] 解析搜狗链接失败: {e}")
+        return sogou_link
 
 
 async def web_search(
@@ -40,20 +103,20 @@ async def web_search(
     max_results = min(max(1, max_results), 10)
     
     if engine == "auto":
-        # 自动选择：Bing（国内最佳）> 搜狗 > ddgs
+        # 自动选择：Bing（国内最佳）> 搜狗
+        # DuckDuckGo 国内无法访问，暂时禁用
         results = await _bing_search(query, max_results)
         if results:
             return results
-        results = await _sogou_search(query, max_results)
-        if results:
-            return results
-        return await _ddgs_search(query, max_results)
+        return await _sogou_search(query, max_results)
     elif engine == "bing":
         return await _bing_search(query, max_results)
     elif engine == "sogou":
         return await _sogou_search(query, max_results)
     elif engine == "ddgs":
-        return await _ddgs_search(query, max_results)
+        # DuckDuckGo 国内无法访问，回退到 Bing
+        logger.warning("[WebSearch] DuckDuckGo 国内无法访问，使用 Bing 替代")
+        return await _bing_search(query, max_results)
     else:
         return await _bing_search(query, max_results)
 
@@ -106,6 +169,15 @@ async def _bing_search(query: str, max_results: int) -> List[Dict[str, str]]:
                 snippet = snippet_el.get_text().strip() if snippet_el else ""
                 
                 if title and url:
+                    # Bing 有时也返回跳转链接，尝试处理
+                    if "bing.com/ck/a" in url or "/link?" in url:
+                        try:
+                            head_resp = await client.head(url, follow_redirects=True, timeout=5)
+                            if str(head_resp.url).startswith("http"):
+                                url = str(head_resp.url)
+                        except:
+                            pass  # 保留原链接
+                    
                     results.append({
                         "title": title,
                         "url": url,
@@ -189,9 +261,23 @@ async def _sogou_search(query: str, max_results: int) -> List[Dict[str, str]]:
                 snippet = snippet_el.get_text().strip() if snippet_el else ""
                 
                 if title and url:
-                    # 处理相对 URL
+                    # 处理搜狗跳转链接，解析真实 URL
                     if url.startswith("/link?"):
-                        url = f"https://www.sogou.com{url}"
+                        full_url = f"https://www.sogou.com{url}"
+                        real_url = _decode_sogou_url(full_url)
+                        # 如果解码失败（仍是跳转链接），尝试通过 HEAD 请求获取真实 URL
+                        if "/link?" in real_url:
+                            try:
+                                head_resp = await client.head(full_url, follow_redirects=True)
+                                if str(head_resp.url).startswith("http") and "/link?" not in str(head_resp.url):
+                                    url = str(head_resp.url)
+                                else:
+                                    url = full_url  # 保留跳转链接
+                            except:
+                                url = full_url
+                        else:
+                            url = real_url
+                    
                     results.append({
                         "title": title,
                         "url": url,
@@ -211,7 +297,7 @@ async def news_search(
     max_results: int = 5,
 ) -> List[Dict[str, str]]:
     """
-    新闻搜索（使用搜狗新闻）
+    新闻搜索（优先 DuckDuckGo，备选 Bing 新闻站点搜索）
     
     Args:
         query: 搜索关键词
@@ -220,58 +306,85 @@ async def news_search(
     Returns:
         新闻结果列表
     """
-    import httpx
-    
-    try:
-        from bs4 import BeautifulSoup
-    except ImportError:
-        logger.error("[NewsSearch] BeautifulSoup 未安装")
-        return []
-    
     logger.info(f"[NewsSearch] 搜索: {query}")
     
-    try:
-        search_url = f"https://news.sogou.com/news?query={quote_plus(query)}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
-        }
+    # DuckDuckGo 国内无法访问，暂时禁用
+    # results = await _ddgs_news_search(query, max_results)
+    # if results:
+    #     return results
+    
+    # 使用 Bing 搜索
+    # 构建优化的新闻查询：关键词 + 新闻/最新/资讯
+    news_query = _build_news_query(query)
+    results = await _bing_search(news_query, max_results * 2)  # 多搜一些，后面过滤
+    
+    if results:
+        # 过滤出新闻网站的结果
+        news_domains = [
+            "news.qq.com", "news.sina.com", "news.163.com", "news.sohu.com",
+            "thepaper.cn", "36kr.com", "huxiu.com", "wallstreetcn.com",
+            "caixin.com", "yicai.com", "jiemian.com", "mydrivers.com",
+            "ithome.com", "cnbeta.com", "ifanr.com", "geekpark.net",
+            "bbc.com", "cnn.com", "reuters.com", "bloomberg.com",
+        ]
         
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-            response = await client.get(search_url, headers=headers)
+        filtered = []
+        for r in results:
+            url = r.get("url", "").lower()
+            # 优先包含新闻域名的结果
+            is_news = any(domain in url for domain in news_domains)
+            # 或者 URL 包含 news/article 等关键词
+            is_news = is_news or any(kw in url for kw in ["/news/", "/article/", "/a/", "/p/"])
             
-            if response.status_code != 200:
-                return []
-            
-            soup = BeautifulSoup(response.text, "html.parser")
-            
-            results = []
-            items = soup.select(".news-list li, .vrwrap")
-            
-            for item in items[:max_results]:
-                title_el = item.select_one("h3 a, .news-title a")
-                if not title_el:
-                    continue
-                    
-                title = title_el.get_text().strip()
-                url = title_el.get("href", "")
-                
-                snippet_el = item.select_one(".news-txt, .txt-info")
-                snippet = snippet_el.get_text().strip() if snippet_el else ""
-                
-                source_el = item.select_one(".news-from, .news-source")
-                source = source_el.get_text().strip() if source_el else ""
-                
-                if title and url:
-                    results.append({
-                        "title": title,
-                        "url": url,
-                        "snippet": snippet[:200] if snippet else "",
-                        "source": source,
-                    })
-            
-            logger.info(f"[NewsSearch] 找到 {len(results)} 条新闻")
-            return results
-            
-    except Exception as e:
-        logger.error(f"[NewsSearch] 失败: {e}")
+            if is_news:
+                filtered.append({"title": r["title"], "url": r["url"], "snippet": r["snippet"], "source": ""})
+        
+        # 如果过滤后有结果，返回过滤后的；否则返回原结果
+        if filtered:
+            return filtered[:max_results]
+        return [{"title": r["title"], "url": r["url"], "snippet": r["snippet"], "source": ""} for r in results[:max_results]]
+    
+    return []
+
+
+def _build_news_query(query: str) -> str:
+    """构建新闻搜索查询"""
+    # 如果已包含"新闻"关键词，直接返回
+    if "新闻" in query:
+        return query
+    
+    # 移除可能影响搜索的词（如"最新消息"改为"最新新闻"效果更好）
+    query = query.replace("最新消息", "").replace("消息", "").replace("资讯", "").strip()
+    
+    # 添加"最新新闻"关键词（测试表明这个组合效果最好）
+    return f"{query} 最新新闻"
+
+
+async def _ddgs_news_search(query: str, max_results: int) -> List[Dict[str, str]]:
+    """DuckDuckGo 新闻搜索"""
+    try:
+        from ddgs import DDGS
+        
+        logger.info(f"[NewsSearch] 使用 DuckDuckGo 新闻搜索: {query}")
+        
+        results = []
+        ddgs = DDGS(timeout=15)
+        for r in ddgs.news(query, max_results=max_results):
+            results.append({
+                "title": r.get("title", ""),
+                "url": r.get("url", r.get("link", "")),
+                "snippet": r.get("body", r.get("excerpt", "")),
+                "source": r.get("source", ""),
+            })
+        
+        logger.info(f"[NewsSearch] DuckDuckGo 找到 {len(results)} 条新闻")
+        return results
+        
+    except ImportError:
+        logger.warning("[NewsSearch] ddgs 未安装")
         return []
+    except Exception as e:
+        logger.warning(f"[NewsSearch] DuckDuckGo 新闻搜索失败: {e}")
+        return []
+
+

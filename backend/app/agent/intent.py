@@ -14,7 +14,7 @@
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 import re
 import json
@@ -33,6 +33,7 @@ class IntentCategory(str, Enum):
     SEARCH = "search"          # 网络搜索（需要联网查询实时信息）
     BROWSER = "browser"        # 浏览器操作
     FINANCE = "finance"        # 股票/基金分析
+    MEMORY = "memory"          # 长期记忆
     ANALYZE = "analyze"        # 安全分析（需要完整 LLM）
     CHAT = "chat"              # 普通聊天（fallback 到完整 LLM）
 
@@ -53,30 +54,49 @@ class ParsedIntent(BaseModel):
 INTENT_SYSTEM_PROMPT_TEMPLATE = """你是意图分类器。分析用户输入，返回 JSON 格式的工具调用。
 
 ## 重要规则（必须遵守）
-1. 天气/气温/下雨/温度 → 必须用 weather 工具，提取城市到 location
-2. 编码/解码 → 对应的 encode/decode 工具
-3. 哈希/MD5/SHA → calculate_hash 工具
-4. DNS/WHOIS/IP查询 → 网络工具
-5. 搜索/新闻/价格 → web_search 或 news_search
-6. 股票/基金/行情/股价/K线 → 股票分析工具（analyze_stock, get_stock_quote 等）
-7. 只有纯聊天时才返回 chat
+1. **记忆优先**：当用户说"记住"、"以后"、"每次"、"下次"、"永远"、"始终"等词时 → 必须用 save_memory 工具
+2. 天气/气温/下雨/温度 → 必须用 weather 工具，提取城市到 location
+3. 编码/解码 → 对应的 encode/decode 工具
+4. 哈希/MD5/SHA → calculate_hash 工具
+5. DNS/WHOIS/IP查询 → 网络工具
+6. 搜索/新闻/价格 → web_search 或 news_search
+7. 股票/基金/行情/股价/K线 → 股票分析工具（analyze_stock, get_stock_quote 等）
+8. 只有纯聊天时才返回 chat
 
 ## 可用工具
 {tools_table}
 
 ## 示例（必须严格参考）
 
+### 记忆类示例（当用户要求记住/以后/改名等 → 必须调用 save_memory）
+输入: "记住，我喜欢简洁的回复"
+输出: {{"category": "memory", "tool": "save_memory", "params": {{"content": "用户喜欢简洁的回复", "category": "preference"}}}}
+
+输入: "以后用英文回复我"
+输出: {{"category": "memory", "tool": "save_memory", "params": {{"content": "以后用英文回复", "category": "instruction"}}}}
+
+输入: "记住我是做量化交易的"
+输出: {{"category": "memory", "tool": "save_memory", "params": {{"content": "用户从事量化交易", "category": "fact"}}}}
+
+输入: "以后你叫小王"
+输出: {{"category": "memory", "tool": "save_memory", "params": {{"content": "AI 助手的名字是小王", "category": "instruction"}}}}
+
+输入: "你以后叫小丽"
+输出: {{"category": "memory", "tool": "save_memory", "params": {{"content": "AI 助手的名字是小丽", "category": "instruction"}}}}
+
+输入: "我叫张三"
+输出: {{"category": "memory", "tool": "save_memory", "params": {{"content": "用户的名字是张三", "category": "fact"}}}}
+
+输入: "记住我的邮箱是 test@example.com"
+输出: {{"category": "memory", "tool": "save_memory", "params": {{"content": "用户邮箱: test@example.com", "category": "fact"}}}}
+
+### 其他示例
+
 输入: "苏州今天的天气如何？"
 输出: {{"category": "search", "tool": "weather", "params": {{"location": "苏州"}}}}
 
 输入: "北京天气怎么样"
 输出: {{"category": "search", "tool": "weather", "params": {{"location": "北京"}}}}
-
-输入: "今天会下雨吗"
-输出: {{"category": "search", "tool": "weather", "params": {{}}}}
-
-输入: "明天上海气温多少"
-输出: {{"category": "search", "tool": "weather", "params": {{"location": "上海"}}}}
 
 输入: "base64编码 hello"
 输出: {{"category": "encode", "tool": "base64_encode", "params": {{"text": "hello"}}}}
@@ -89,15 +109,6 @@ INTENT_SYSTEM_PROMPT_TEMPLATE = """你是意图分类器。分析用户输入，
 
 输入: "分析一下贵州茅台"
 输出: {{"category": "finance", "tool": "analyze_stock", "params": {{"symbol": "600519", "market": "A"}}}}
-
-输入: "600519 行情"
-输出: {{"category": "finance", "tool": "get_stock_quote", "params": {{"symbol": "600519", "market": "A"}}}}
-
-输入: "比亚迪的技术指标"
-输出: {{"category": "finance", "tool": "get_technical_indicators", "params": {{"symbol": "002594", "market": "A"}}}}
-
-输入: "腾讯控股最新新闻"
-输出: {{"category": "finance", "tool": "get_stock_news", "params": {{"keyword": "00700"}}}}
 
 输入: "搜索平安银行"
 输出: {{"category": "finance", "tool": "search_stock", "params": {{"keyword": "平安银行", "market": "A"}}}}
@@ -127,6 +138,10 @@ def build_intent_system_prompt() -> str:
     
     # 工具优先级排序（重要的放前面）
     priority_order = [
+        # 记忆工具（高优先级）
+        "save_memory",
+        "recall_memories",
+        # 常用工具
         "weather",      # 天气查询最常用
         "web_search",   # 网络搜索
         "news_search",  # 新闻搜索
@@ -389,6 +404,10 @@ TOOL_CATEGORY_MAP = {
     "get_stock_news": IntentCategory.FINANCE,
     "get_technical_indicators": IntentCategory.FINANCE,
     "analyze_stock": IntentCategory.FINANCE,
+    # 记忆
+    "save_memory": IntentCategory.MEMORY,
+    "recall_memories": IntentCategory.MEMORY,
+    "list_all_memories": IntentCategory.MEMORY,
 }
 
 
@@ -429,5 +448,9 @@ def get_tool_display_name(tool_name: str) -> str:
         "get_stock_news": "股票新闻",
         "get_technical_indicators": "技术指标",
         "analyze_stock": "综合分析",
+        # 记忆
+        "save_memory": "保存记忆",
+        "recall_memories": "检索记忆",
+        "list_all_memories": "记忆列表",
     }
     return TOOL_NAMES.get(tool_name, tool_name)

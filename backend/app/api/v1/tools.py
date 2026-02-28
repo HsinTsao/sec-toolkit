@@ -1,5 +1,5 @@
 """安全工具路由"""
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from typing import List, Optional
@@ -414,6 +414,20 @@ class IPRequest(BaseModel):
 async def ip_info(req: IPRequest):
     """IP 信息查询"""
     return await network.ip_info(req.ip)
+
+
+@router.get("/network/my-location")
+async def my_location(request: Request):
+    """
+    获取当前请求客户端的 IP 地理位置（供前端 AI 上下文使用）。
+    通过后端代理请求 ip-api.com，避免浏览器直连的 CORS 和 429 限制。
+    """
+    from .callback import get_client_ip
+    client_ip = get_client_ip(request)
+    if client_ip == "unknown":
+        return {"error": "无法获取客户端 IP"}
+    result = await network.ip_info(client_ip)
+    return result
 
 
 class AnalyzeRequest(BaseModel):

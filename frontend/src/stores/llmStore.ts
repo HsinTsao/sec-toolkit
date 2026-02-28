@@ -42,7 +42,7 @@ interface LLMState {
   configLoading: boolean
   configError: string | null
   loadConfig: () => Promise<void>
-  updateConfig: (data: { provider_id: string; api_key?: string; base_url?: string; model: string }) => Promise<void>
+  updateConfig: (data: { provider_id: string; api_key?: string; base_url?: string; model: string; use_system_default?: boolean }) => Promise<void>
   
   // 当前选择的提供商信息（辅助函数）
   getCurrentProvider: () => LLMProvider | null
@@ -59,6 +59,9 @@ interface LLMState {
   addMessage: (sessionId: string, message: Omit<ChatMessage, 'id' | 'timestamp'>) => void
   updateMessage: (sessionId: string, messageId: string, content: string) => void
   clearMessages: (sessionId: string) => void
+  
+  // 获取对话历史（用于发送给后端 API）
+  getHistory: (sessionId: string, limit?: number) => { role: string; content: string }[]
 }
 
 export const useLLMStore = create<LLMState>()(
@@ -190,14 +193,42 @@ export const useLLMStore = create<LLMState>()(
             : session
         ),
       })),
+      
+      // 获取对话历史（用于发送给后端 API）
+      getHistory: (sessionId, limit = 10) => {
+        const session = get().sessions.find(s => s.id === sessionId)
+        if (!session) return []
+        
+        // 只取 user 和 assistant 的消息，排除 system 和空消息
+        const validMessages = session.messages.filter(
+          msg => (msg.role === 'user' || msg.role === 'assistant') && msg.content.trim()
+        )
+        
+        // 取最近的 limit 条消息
+        const recentMessages = validMessages.slice(-limit)
+        
+        // 转换为后端需要的格式
+        return recentMessages.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+        }))
+      },
     }),
     {
       name: 'llm-storage',
+      version: 2,  // 版本号，用于迁移
       // 只持久化会话数据，配置从后端获取
       partialize: (state) => ({
         sessions: state.sessions,
         currentSessionId: state.currentSessionId,
       }),
+      // 版本迁移：清除旧版本数据
+      migrate: (persistedState, version) => {
+        if (version < 2) {
+          return { sessions: [], currentSessionId: null }
+        }
+        return persistedState as { sessions: never[]; currentSessionId: null }
+      },
     }
   )
 )

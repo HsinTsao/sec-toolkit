@@ -7,6 +7,9 @@ from .callback import CallbackToken, CallbackRecord
 from .poc_rule import PocRule
 from .llm_config import UserLLMConfig
 from .knowledge import UploadedFile, KnowledgeItem
+from .agent_config import AgentConfig, DEFAULT_SYSTEM_PROMPT, AgentTraceHistory
+from .skill import UserSkill
+from .memory import UserMemory, MemoryCategory
 
 __all__ = [
     "User",
@@ -17,5 +20,9 @@ __all__ = [
     "PocRule",
     "UserLLMConfig",
     "UploadedFile", "KnowledgeItem",
+    "AgentConfig", "DEFAULT_SYSTEM_PROMPT",
+    "AgentTraceHistory",
+    "UserSkill",
+    "UserMemory", "MemoryCategory",
 ]
 

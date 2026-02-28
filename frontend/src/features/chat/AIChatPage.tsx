@@ -21,16 +21,22 @@ import {
   FileUp,
   ExternalLink,
   PanelLeftOpen,
+  Activity,
 } from 'lucide-react'
 import { useLLMStore, type ChatMessage } from '@/stores/llmStore'
 import { cn } from '@/lib/utils'
 import toast from 'react-hot-toast'
-import { notesApi, llmApi } from '@/lib/api'
+import { notesApi, llmApi, toolsApi } from '@/lib/api'
 import { useAuthStore } from '@/stores/authStore'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
+import { TraceTimeline } from '@/components/trace'
+import { useTraceStore, type TraceEvent } from '@/stores/traceStore'
+import { AgentConfigPanel } from '@/components/agent'
+import { SkillSelector, SkillWelcome } from '@/components/skill/SkillSelector'
+import { useSkillStore } from '@/stores/skillStore'
 
 // ==================== 性能优化：节流更新 ====================
 /**
@@ -101,6 +107,7 @@ export default function AIChatPage() {
     getCurrentSession,
     addMessage,
     updateMessage,
+    getHistory,
   } = useLLMStore()
   
   const [input, setInput] = useState('')
@@ -117,9 +124,22 @@ export default function AIChatPage() {
   const [isMobileView, setIsMobileView] = useState(false)
   const [userLocation, setUserLocation] = useState<string | null>(null) // 用户位置
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null) // 当前流式输出的消息ID
+  const [showTracePanel, setShowTracePanel] = useState(true) // 显示 Trace 面板
+  const [showAgentConfig, setShowAgentConfig] = useState(false) // 显示 Agent 配置
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const throttledUpdater = useRef(createThrottledUpdater()) // 节流更新器
+  
+  // Trace Store
+  const { 
+    startSession: startTraceSession,
+    endSession: endTraceSession, 
+    addEvent: addTraceEvent,
+    currentSession: traceCurrentSession,
+  } = useTraceStore()
+  
+  // Skill Store
+  const { activeSkillIds, activeSkills } = useSkillStore()
   
   // 监听窗口大小变化
   useEffect(() => {
@@ -148,16 +168,13 @@ interface RAGSource {
   const currentSession = getCurrentSession()
   const currentProvider = getCurrentProvider()
   
-  // 获取用户位置（通过 IP 地理位置 API）
+  // 获取用户位置（通过后端代理，避免 ipapi.co 的 CORS 和 429 限制）
   useEffect(() => {
     const fetchLocation = async () => {
       try {
-        // 使用免费的 IP 地理位置 API
-        const response = await fetch('https://ipapi.co/json/')
-        if (response.ok) {
-          const data = await response.json()
-          // 优先使用城市名，其次使用地区名
-          const location = data.city || data.region || data.country_name
+        const { data } = await toolsApi.myLocation()
+        if (data && !data.error) {
+          const location = data.city || data.region || data.country
           if (location) {
             setUserLocation(location)
             console.log('[Location] 获取到用户位置:', location)
@@ -165,7 +182,6 @@ interface RAGSource {
         }
       } catch (error) {
         console.warn('[Location] 获取位置失败:', error)
-        // 失败时使用默认位置
       }
     }
     fetchLocation()
@@ -311,6 +327,9 @@ interface RAGSource {
       inputRef.current.style.height = 'auto'
     }
     
+    // 在添加新消息之前，先获取对话历史（不包含当前消息）
+    const chatHistory = (sessionId && getHistory) ? getHistory(sessionId, 10) : []
+    
     // 添加用户消息
     addMessage(sessionId, { role: 'user', content: userMessage })
     
@@ -338,7 +357,13 @@ interface RAGSource {
       // 快速模式可在任何时候使用，适合编码/解码/哈希等简单操作
       // 注意：快速模式是无状态的，不使用历史记录
       if (useFastMode) {
-        const fastResponse = await fetch('/api/llm/fast/chat', {
+        // 如果有正在进行的会话，先结束它（保存到历史）
+        if (traceCurrentSession) {
+          endTraceSession()
+        }
+        
+        // 使用流式 API 获取实时 trace 事件（chatHistory 已在前面获取）
+        const fastResponse = await fetch('/api/llm/fast/chat/stream', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -352,15 +377,76 @@ interface RAGSource {
               location: userLocation,
               timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             } : undefined,
+            skill_ids: activeSkillIds.length > 0 ? activeSkillIds : undefined,
+            history: chatHistory.length > 0 ? chatHistory : undefined,  // 传递对话历史
           }),
         })
         
         if (fastResponse.ok) {
-          const fastResult = await fastResponse.json()
+          const reader = fastResponse.body?.getReader()
+          if (!reader) {
+            throw new Error('无法读取响应流')
+          }
+          
+          const decoder = new TextDecoder()
+          let fastContent = ''
+          let fastBuffer = ''
+          let fastResult: {
+            fallback_needed?: boolean
+            tokens_estimated?: number
+            rule_matched?: boolean
+            tool_used?: string | null
+            trace_id?: string
+          } = {}
+          
+          try {
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) break
+              
+              fastBuffer += decoder.decode(value, { stream: true })
+              const lines = fastBuffer.split('\n')
+              fastBuffer = lines.pop() || ''
+              
+              for (const line of lines) {
+                const trimmedLine = line.trim()
+                if (!trimmedLine || !trimmedLine.startsWith('data: ')) continue
+                
+                const data = trimmedLine.slice(6)
+                if (!data) continue
+                
+                try {
+                  const json = JSON.parse(data)
+                  
+                  // 处理 trace 事件
+                  if (json.stage === 'trace_start' && json.data?.trace_id) {
+                    startTraceSession(json.data.trace_id)
+                  } else if (json.stage === 'trace' && json.data) {
+                    // 将 trace 事件添加到 store
+                    addTraceEvent(json.data as TraceEvent)
+                  }
+                  
+                  // 处理业务事件
+                  if (json.stage === 'content') {
+                    fastContent = json.data
+                  } else if (json.stage === 'fallback') {
+                    fastResult.fallback_needed = true
+                    console.log('[FastMode] Fallback to full mode:', json.data?.reason)
+                  } else if (json.stage === 'done') {
+                    fastResult = { ...fastResult, ...json.data }
+                  }
+                } catch {
+                  // 忽略 JSON 解析错误
+                }
+              }
+            }
+          } finally {
+            reader.releaseLock()
+          }
           
           // 如果不需要 fallback，直接返回结果
-          if (!fastResult.fallback_needed && fastResult.content) {
-            setLastTokensUsed(fastResult.tokens_estimated)
+          if (!fastResult.fallback_needed && fastContent) {
+            setLastTokensUsed(fastResult.tokens_estimated || 0)
             
             // 更新消息
             const session = useLLMStore.getState().sessions.find(s => s.id === sessionId)
@@ -370,15 +456,15 @@ interface RAGSource {
               const modeTag = fastResult.rule_matched ? '⚡' : '🚀'
               const toolInfo = fastResult.tool_used ? ` (${fastResult.tool_used})` : ''
               const tokenInfo = fastResult.tokens_estimated === 0 ? '0 tokens (规则匹配)' : `~${fastResult.tokens_estimated} tokens`
-              updateMessage(sessionId, lastMsg.id, `${fastResult.content}\n\n---\n_${modeTag} 快速模式${toolInfo} · ${tokenInfo}_`)
+              updateMessage(sessionId, lastMsg.id, `${fastContent}\n\n---\n_${modeTag} 快速模式${toolInfo} · ${tokenInfo}_`)
             }
-            // 快速模式完成，清除状态
+            // 快速模式完成，结束 trace session
+            endTraceSession()
             setIsLoading(false)
             setStreamingMessageId(null)
             return
           }
           // 需要 fallback（复杂问题），自动切换到完整模式
-          console.log('[FastMode] Fallback to full mode:', fastResult.fallback_needed)
         }
       }
       
@@ -436,6 +522,16 @@ interface RAGSource {
                 throw new Error(json.error)
               }
               
+              // 处理 trace 事件（完整模式也支持 trace）
+              if (json.stage === 'trace_start' && json.data?.trace_id) {
+                // 如果之前没有启动 trace session（非 fallback 场景），启动一个
+                if (!useTraceStore.getState().currentSession) {
+                  startTraceSession(json.data.trace_id)
+                }
+              } else if (json.stage === 'trace' && json.data) {
+                addTraceEvent(json.data as TraceEvent)
+              }
+              
               // 处理来源信息
               if (json.sources) {
                 setLastSources(json.sources)
@@ -470,6 +566,9 @@ interface RAGSource {
         if (finalMsg && finalMsg.role === 'assistant' && content) {
           throttledUpdater.current.flush(sessionId, finalMsg.id, content, updateMessage)
         }
+        
+        // 完整模式完成，结束 trace session
+        endTraceSession()
       } finally {
         reader.releaseLock()
       }
@@ -588,15 +687,29 @@ interface RAGSource {
               </span>
             )}
           </button>
+          
+          {/* Agent 配置按钮 */}
+          <button
+            onClick={() => setShowAgentConfig(true)}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-theme-muted hover:text-theme-text hover:bg-theme-bg transition-colors"
+          >
+            <Settings className="w-4 h-4" />
+            <span className="text-sm">Agent 配置</span>
+          </button>
         </div>
       </div>
       
-      {/* 右侧聊天区域 - 独立滚动 */}
+      {/* 中间聊天区域 - 独立滚动 */}
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {currentSession ? (
           <>
             {/* 消息列表 */}
             <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 scroll-smooth">
+              {/* Skill 欢迎消息 */}
+              {useFastMode && currentSession.messages.length === 0 && activeSkills.length > 0 && (
+                <SkillWelcome />
+              )}
+              
               {currentSession.messages.map((message) => (
                 <MessageBubble
                   key={message.id}
@@ -618,7 +731,7 @@ interface RAGSource {
             </div>
             
             {/* 输入区域 */}
-            <div className="p-3 lg:p-4 border-t border-theme-border">
+            <div className="p-3 lg:p-4 border-t border-theme-border bg-theme-bg relative z-[60]">
               <div className="flex gap-2 max-w-4xl mx-auto">
                 {/* 移动端显示会话列表切换按钮 */}
                 {isMobileView && (
@@ -731,6 +844,28 @@ interface RAGSource {
                     <Sparkles className="w-3.5 h-3.5" />
                     <span className="hidden sm:inline">快速</span> {useFastMode ? '⚡' : 'OFF'}
                   </button>
+                  
+                  {/* Skill 选择器（仅在快速模式下显示） */}
+                  {useFastMode && (
+                    <SkillSelector onManageClick={() => setShowAgentConfig(true)} />
+                  )}
+                  
+                  {/* Trace 面板开关 */}
+                  {useFastMode && !isMobileView && (
+                    <button
+                      onClick={() => setShowTracePanel(!showTracePanel)}
+                      className={cn(
+                        'flex items-center gap-1 lg:gap-1.5 px-2 py-1 rounded transition-colors',
+                        showTracePanel 
+                          ? 'bg-purple-500/20 text-purple-500' 
+                          : 'text-theme-muted hover:text-theme-text'
+                      )}
+                      title="显示/隐藏执行追踪面板"
+                    >
+                      <Activity className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Trace</span>
+                    </button>
+                  )}
                 </div>
                 
                 {/* 模型信息和 Token 消耗 */}
@@ -830,12 +965,25 @@ interface RAGSource {
         )}
       </div>
       
+      {/* 右侧 Trace 面板 */}
+      {showTracePanel && useFastMode && !isMobileView && (
+        <div className="w-80 flex-shrink-0">
+          <TraceTimeline />
+        </div>
+      )}
+      
       {/* 设置弹窗 */}
       {showSettings && (
         <SettingsModal
           onClose={() => setShowSettings(false)}
         />
       )}
+      
+      {/* Agent 配置弹窗 */}
+      <AgentConfigPanel
+        isOpen={showAgentConfig}
+        onClose={() => setShowAgentConfig(false)}
+      />
     </div>
   )
 }
@@ -1265,7 +1413,7 @@ function SettingsModal({
   }
   
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[150] p-4">
       <div className="bg-theme-card border border-theme-border rounded-xl w-full max-w-lg p-6 animate-fadeIn max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold">API 设置</h2>

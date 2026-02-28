@@ -25,6 +25,7 @@ class PocRule(Base):
     redirect_url = Column(String(500), nullable=True)  # 重定向 URL（优先于 response_body）
     delay_ms = Column(Integer, default=0)  # 延迟响应（毫秒）
     enable_variables = Column(Integer, default=0)  # 是否启用变量替换
+    filename = Column(String(100), nullable=True)  # 文件名，设置后返回 Content-Disposition
     
     # 元数据
     is_active = Column(Integer, default=1)

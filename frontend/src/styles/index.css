@@ -271,10 +271,16 @@ input::placeholder, textarea::placeholder {
 }
 
 /* 主题切换过渡动画 */
-* {
+*:not(.leaflet-container):not(.leaflet-container *) {
   transition-property: background-color, border-color, color, box-shadow;
   transition-timing-function: ease;
   transition-duration: 0ms;
+}
+
+/* Leaflet 地图容器样式修正 - 防止图层逃逸 */
+.leaflet-container {
+  z-index: 0 !important;
+  isolation: isolate;
 }
 
 html.transitioning,

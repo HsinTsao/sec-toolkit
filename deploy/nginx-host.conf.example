@@ -1,0 +1,26 @@
+# 宿主机 Nginx 配置示例
+# 用途：在宿主机运行 Nginx 接收真实客户端连接，转发到 Docker 并传递真实 IP
+# 解决：OOB 回调、API 等记录到的客户端 IP 为 127.0.0.1 或 172.x 的问题
+#
+# 使用方法：
+# 1. 复制到 /etc/nginx/conf.d/ 或 include 到 nginx.conf
+# 2. 修改 server_name、upstream 端口以匹配你的部署
+# 3. 确保宿主机 80/443 不被 Docker 占用，或调整 Docker 映射
+
+upstream toolkit_frontend {
+    server 127.0.0.1:8080;  # Docker 前端映射到 8080，避免冲突
+}
+
+server {
+    listen 80;
+    server_name _;  # 或你的域名
+
+    location / {
+        proxy_pass http://toolkit_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

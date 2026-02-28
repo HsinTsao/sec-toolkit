@@ -1,0 +1,74 @@
+---
+description: 数据库位置、配置信息，以及新增表、修改表的操作规范
+alwaysApply: true
+---
+
+# 数据库规范
+
+## 数据库基本信息
+
+- **类型**: SQLite（异步驱动 `aiosqlite`）
+- **文件位置**: `data/toolkit.db`（项目根目录下）
+- **Docker 环境**: `/app/data/toolkit.db`
+- **连接字符串**: `sqlite+aiosqlite:///{data_dir}/toolkit.db`，可通过 `.env` 中 `DATABASE_URL` 覆盖
+- **配置文件**: `backend/app/config.py`
+- **引擎与 Base**: `backend/app/database.py`
+- **不使用 Alembic**，表创建依赖 `Base.metadata.create_all`
+
+## 新增表
+
+1. 在 `backend/app/models/` 下创建模型文件，继承 `Base`：
+
+```python
+import uuid
+from datetime import datetime
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey
+from ..database import Base
+
+class Example(Base):
+    __tablename__ = "examples"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(100), nullable=False)
+    content = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+```
+
+2. 在 `backend/app/models/__init__.py` 中导入并加入 `__all__`
+3. 运行迁移脚本创建表：`cd backend && python scripts/migrate_db.py`
+
+## 修改已有表（加列）
+
+`create_all` 不会修改已有表结构，需手动执行 ALTER：
+
+```python
+# 在 migrate_db.py 或单独脚本中
+await conn.execute(text("ALTER TABLE examples ADD COLUMN status VARCHAR(20) DEFAULT 'active'"))
+```
+
+或直接用 SQLite 命令行：
+
+```bash
+sqlite3 data/toolkit.db "ALTER TABLE examples ADD COLUMN status VARCHAR(20) DEFAULT 'active';"
+```
+
+> SQLite 的 ALTER TABLE 仅支持 ADD COLUMN，不支持 DROP/RENAME COLUMN（3.35.0+ 才支持 DROP/RENAME）。如需删除列或改类型，需要重建表。
+
+## 模型规约
+
+- 主键：`String(36)` UUID
+- 时间戳：必须包含 `created_at` 和 `updated_at`
+- 外键关联用户：`ForeignKey("users.id", ondelete="CASCADE")`
+- 所有数据库操作必须异步（`AsyncSession`）
+
+## 常用命令
+
+| 命令 | 说明 |
+|------|------|
+| `cd backend && python scripts/migrate_db.py` | 创建新表 |
+| `cd backend && python scripts/migrate_db.py --list` | 列出所有表 |
+| `cd backend && python scripts/migrate_db.py --show <表名>` | 查看表结构 |
+| `sqlite3 data/toolkit.db ".tables"` | SQLite CLI 列出表 |
+| `sqlite3 data/toolkit.db ".schema <表名>"` | SQLite CLI 查看建表语句 |

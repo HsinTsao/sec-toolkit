@@ -41,20 +41,29 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       port: 5173,
-      host: true, // 监听所有网络接口，允许内网访问
+      host: true,
       https: httpsConfig,
       proxy: {
         '/api': {
           target: apiTarget,
           changeOrigin: true,
           secure: false, // 允许自签名证书
+          ws: true, // 支持 WebSocket（反弹 Shell 终端等）
           timeout: 60000, // 60 秒超时
           configure: (proxy) => {
             proxy.on('error', (err, req, res) => {
               console.error('[Proxy Error]', err.message)
             })
             proxy.on('proxyReq', (proxyReq, req) => {
-              // 确保 Content-Length 正确传递
+              // 传递真实客户端 IP（OOB 回调等需要）
+              const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+                || req.socket?.remoteAddress
+                || (req as any).connection?.remoteAddress
+              if (clientIp) {
+                const forwarded = req.headers['x-forwarded-for'] || clientIp
+                proxyReq.setHeader('X-Real-IP', clientIp)
+                proxyReq.setHeader('X-Forwarded-For', forwarded)
+              }
               if (req.headers['content-length']) {
                 proxyReq.setHeader('Content-Length', req.headers['content-length'])
               }
@@ -66,6 +75,19 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           secure: false,
           timeout: 60000,
+          configure: (proxy) => {
+            proxy.on('proxyReq', (proxyReq, req) => {
+              // 传递真实客户端 IP（OOB 回调必须）
+              const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+                || req.socket?.remoteAddress
+                || (req as any).connection?.remoteAddress
+              if (clientIp) {
+                const forwarded = req.headers['x-forwarded-for'] || clientIp
+                proxyReq.setHeader('X-Real-IP', clientIp)
+                proxyReq.setHeader('X-Forwarded-For', forwarded)
+              }
+            })
+          },
         },
       },
     },

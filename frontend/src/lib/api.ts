@@ -234,6 +234,9 @@ export const toolsApi = {
     api.post('/tools/network/whois', { domain }),
   ipInfo: (ip: string) =>
     api.post('/tools/network/ip/info', { ip }),
+  /** 获取当前客户端 IP 的地理位置（后端代理，避免 CORS/429） */
+  myLocation: () =>
+    api.get<{ ip?: string; city?: string; region?: string; country?: string; error?: string }>('/tools/network/my-location'),
   analyzeTarget: (target: string) =>
     api.post('/tools/network/analyze', { target }),
   
@@ -331,9 +334,6 @@ export const callbackApi = {
   // 统计分析
   getTokenStats: (tokenId: string) =>
     api.get(`/callback/tokens/${tokenId}/stats`),
-  getAllStats: () =>
-    api.get('/callback/stats/all'),
-  
   // PoC 规则
   getPocTemplates: () =>
     api.get('/callback/poc-templates'),
@@ -349,6 +349,7 @@ export const callbackApi = {
     redirect_url?: string;
     delay_ms?: number;
     enable_variables?: boolean;
+    filename?: string;
   }) => api.post(`/callback/tokens/${tokenId}/rules`, data),
   updatePocRule: (tokenId: string, ruleId: string, data: {
     name?: string;
@@ -361,6 +362,7 @@ export const callbackApi = {
     delay_ms?: number;
     enable_variables?: boolean;
     is_active?: boolean;
+    filename?: string;
   }) => api.patch(`/callback/tokens/${tokenId}/rules/${ruleId}`, data),
   deletePocRule: (tokenId: string, ruleId: string) =>
     api.delete(`/callback/tokens/${tokenId}/rules/${ruleId}`),
@@ -426,9 +428,6 @@ export const llmApi = {
   chat: (data: { message: string; history: ChatMessage[]; use_rag?: boolean }) =>
     api.post<{ content: string; sources: string[] }>('/llm/chat', data),
   
-  // 聊天（流式）- 返回 URL，需要用 EventSource 处理
-  getChatStreamUrl: () => '/api/llm/chat/stream',
-
   // 快速模式 API（双 LLM 架构，省 Token）
   fastChat: (data: { message: string; mode?: string; skip_summary?: boolean }) =>
     api.post<{
@@ -439,8 +438,6 @@ export const llmApi = {
       tool_used: string | null
       fallback_needed: boolean
     }>('/llm/fast/chat', data),
-  getFastChatStreamUrl: () => '/api/llm/fast/chat/stream',
-  getFastModeInfo: () => api.get('/llm/fast/info'),
 }
 
 // ==================== Proxy API ====================
