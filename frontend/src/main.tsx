@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'react-hot-toast'
 import App from './App'
 import './styles/index.css'
+import '@/api/setup'
 import { initTheme } from './stores/themeStore'
 
 // 初始化主题（在渲染前执行以避免闪烁）

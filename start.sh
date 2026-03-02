@@ -130,13 +130,36 @@ setup_frontend() {
 }
 
 generate_ssl() {
-    [ -f "$CERT_DIR/server.key" ] && [ -f "$CERT_DIR/server.crt" ] && return
+    [ -f "$CERT_DIR/server.key" ] && [ -f "$CERT_DIR/server.crt" ] && {
+        print_info "SSL 证书已存在，跳过生成（删除 certs/ 目录可重新生成）"
+        return
+    }
     
-    print_info "生成 SSL 证书..."
+    print_info "生成自签名 SSL 证书（含 SAN）..."
+    
+    # 获取本机公网 IP（可选）
+    local public_ip=""
+    public_ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "")
+    
+    # 构建 SAN 扩展
+    local san="DNS:localhost"
+    san="$san,IP:127.0.0.1,IP:::1"
+    [ -n "$public_ip" ] && san="$san,IP:$public_ip"
+    
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout "$CERT_DIR/server.key" -out "$CERT_DIR/server.crt" \
-        -subj "/CN=localhost" 2>/dev/null
-    print_success "SSL 证书已生成"
+        -subj "/CN=SecToolkit/O=SecToolkit" \
+        -addext "subjectAltName=$san" 2>/dev/null
+    
+    if [ $? -eq 0 ]; then
+        print_success "SSL 证书已生成: $CERT_DIR/"
+        echo -e "  SAN: $san"
+        [ -n "$public_ip" ] && echo -e "  公网 IP: $public_ip"
+        echo -e "  ${YELLOW}提示: 浏览器访问时需要手动信任自签名证书${NC}"
+    else
+        print_error "SSL 证书生成失败"
+        exit 1
+    fi
 }
 
 # ==================== 服务管理 ====================
@@ -159,6 +182,8 @@ cmd_stop() {
     # 杀死占用端口的进程
     fuser -k $BACKEND_PORT/tcp 2>/dev/null || true
     fuser -k $FRONTEND_PORT/tcp 2>/dev/null || true
+    fuser -k 443/tcp 2>/dev/null || true
+    fuser -k 80/tcp 2>/dev/null || true
     
     # 杀死所有 sec-toolkit 相关的 Python 和 Node 进程
     pkill -f "python.*sec-toolkit" 2>/dev/null || true
@@ -385,7 +410,9 @@ cmd_prod() {
     echo ""
     print_success "启动完成！"
     echo -e "  ${GREEN}前端:${NC} ${proto}://localhost"
-    echo -e "  ${GREEN}后端:${NC} ${proto}://localhost:${BACKEND_PORT}"
+    [ "$use_ssl" = "true" ] && echo -e "  ${GREEN}HTTPS:${NC} https://localhost"
+    echo -e "  ${GREEN}后端:${NC} http://localhost:${BACKEND_PORT} （Docker 内部）"
+    [ "$use_ssl" = "true" ] && echo -e "  ${YELLOW}提示:${NC} HTTP 请求会自动重定向到 HTTPS"
 }
 
 cmd_logs() {
@@ -430,6 +457,9 @@ main() {
             *)     [ -z "$cmd" ] && cmd="$arg" ;;
         esac
     done
+    
+    # SSL 模式下前端使用 443 端口（HTTPS 默认端口）
+    [ "$use_ssl" = "true" ] && FRONTEND_PORT=443
     
     case "$cmd" in
         ""|help|-h|--help)

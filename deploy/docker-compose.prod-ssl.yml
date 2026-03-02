@@ -1,0 +1,23 @@
+# 生产环境 HTTPS 覆盖配置
+# SSL 终止在 Nginx（前端容器），后端保持 HTTP
+#
+# 前置条件: 在部署目录 certs/ 下放置证书文件
+#   - certs/server.crt  (证书，或 Let's Encrypt 的 fullchain.pem)
+#   - certs/server.key  (私钥，或 Let's Encrypt 的 privkey.pem)
+#
+# 使用方法:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.prod-ssl.yml up -d
+
+services:
+  frontend:
+    ports:
+      - "443:443"
+    volumes:
+      - ./certs:/etc/nginx/ssl:ro
+      - ./nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-k", "https://localhost:443"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

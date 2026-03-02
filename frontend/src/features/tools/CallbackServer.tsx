@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { 
   Radio, Copy, Check, Trash2, Plus, RefreshCw,
   Clock, Globe, ChevronDown, ChevronUp,
   AlertCircle, Loader2, Pause, Play, Info,
-  BarChart3, Users, FileCode, Link2, Zap, Edit2, X, ExternalLink
+  BarChart3, Users, FileCode, Link2, Zap, Edit2, X, ExternalLink, Search
 } from 'lucide-react'
 import { callbackApi } from '@/lib/api'
 import toast from 'react-hot-toast'
@@ -128,6 +128,11 @@ export default function CallbackServer() {
     filename: '',
   })
   
+  // 搜索
+  const [searchKeyword, setSearchKeyword] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const lastPollTime = useRef<string | null>(null)
 
@@ -260,6 +265,8 @@ export default function CallbackServer() {
       setRecords([])
       setStats(null)
     }
+    setSearchInput('')
+    setSearchKeyword('')
   }, [selectedToken])
 
   // 轮询处理
@@ -303,14 +310,14 @@ export default function CallbackServer() {
     }
   }, [polling, selectedToken])
 
-  // 加载记录
-  const loadRecords = async () => {
+  // 加载记录（支持关键字搜索）
+  const loadRecords = async (keyword?: string) => {
     if (!selectedToken) return
     setLoading(true)
     try {
-      const { data } = await callbackApi.getRecords(selectedToken.id)
+      const kw = keyword !== undefined ? keyword : searchKeyword
+      const { data } = await callbackApi.getRecords(selectedToken.id, undefined, kw || undefined)
       setRecords(data)
-      // 同时刷新统计，以同步更新 token 列表中的请求数量
       loadStats()
     } catch {
       toast.error('加载记录失败')
@@ -318,6 +325,22 @@ export default function CallbackServer() {
       setLoading(false)
     }
   }
+
+  // 搜索：debounce 300ms
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchInput(value)
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = setTimeout(() => {
+      setSearchKeyword(value)
+    }, 300)
+  }, [])
+
+  // searchKeyword 变化时触发查询
+  useEffect(() => {
+    if (selectedToken) {
+      loadRecords(searchKeyword)
+    }
+  }, [searchKeyword])
 
   // 加载统计
   const loadStats = async () => {
@@ -516,6 +539,23 @@ export default function CallbackServer() {
       filename: rule.filename || '',
     })
     setShowPocForm(true)
+  }
+
+  // 关键字高亮组件
+  const HighlightText = ({ text, className }: { text: string; className?: string }) => {
+    if (!searchKeyword || !text) return <span className={className}>{text}</span>
+    const escaped = searchKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const parts = text.split(new RegExp(`(${escaped})`, 'gi'))
+    if (parts.length === 1) return <span className={className}>{text}</span>
+    return (
+      <span className={className}>
+        {parts.map((part, i) =>
+          part.toLowerCase() === searchKeyword.toLowerCase()
+            ? <mark key={i} className="bg-orange-500 text-white rounded-sm px-0.5">{part}</mark>
+            : part
+        )}
+      </span>
+    )
   }
 
   // 格式化 IP（::ffff:x.x.x.x → x.x.x.x）
@@ -781,6 +821,30 @@ export default function CallbackServer() {
               {activeTab === 'records' ? (
                 // 请求记录列表
                 <div className="space-y-3 min-w-0">
+                  {/* 搜索框 */}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-theme-muted" />
+                    <input
+                      type="text"
+                      value={searchInput}
+                      onChange={(e) => handleSearchChange(e.target.value)}
+                      placeholder="搜索请求记录（URL、Headers、Body、IP、外带数据...）"
+                      className="w-full pl-9 pr-8 py-2 text-sm bg-theme-bg border border-theme-border rounded-lg focus:outline-none focus:border-theme-primary/50 placeholder:text-theme-muted/50"
+                    />
+                    {searchInput && (
+                      <button
+                        onClick={() => { handleSearchChange(''); setSearchInput(''); setSearchKeyword('') }}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-theme-muted hover:text-theme-text"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                  {searchKeyword && (
+                    <div className="text-xs text-theme-muted">
+                      搜索 "<span className="text-theme-primary">{searchKeyword}</span>" 共 {records.length} 条结果
+                    </div>
+                  )}
                   {loading ? (
                     <div className="flex items-center justify-center py-12">
                       <Loader2 className="w-6 h-6 animate-spin text-theme-primary" />
@@ -838,11 +902,12 @@ export default function CallbackServer() {
                                 {record.method}
                               </span>
                               <span className="font-mono text-sm text-theme-text truncate min-w-0">
-                                {record.path}
+                                <HighlightText text={record.path || ''} />
                                 {record.query_string && (
-                                  <span className="text-theme-muted">
-                                    ?{record.query_string.length > 40 ? record.query_string.slice(0, 40) + '…' : record.query_string}
-                                  </span>
+                                  <HighlightText
+                                    text={'?' + (record.query_string.length > 40 ? record.query_string.slice(0, 40) + '…' : record.query_string)}
+                                    className="text-theme-muted"
+                                  />
                                 )}
                               </span>
                             </div>
@@ -864,7 +929,7 @@ export default function CallbackServer() {
                                 title={formatIp(record.client_ip) !== 'Unknown' ? '点击跳转网络工具查询' : undefined}
                               >
                                 <Globe className="w-3 h-3" />
-                                {formatIp(record.client_ip)}
+                                <HighlightText text={formatIp(record.client_ip)} />
                               </span>
                               <span className="flex items-center gap-1">
                                 <Clock className="w-3 h-3" />
@@ -879,7 +944,7 @@ export default function CallbackServer() {
                           </div>
                           {record.user_agent && (
                             <div className="mt-2 text-xs text-theme-muted truncate max-w-full">
-                              UA: {record.user_agent}
+                              UA: <HighlightText text={record.user_agent} />
                             </div>
                           )}
                         </div>
@@ -940,7 +1005,7 @@ export default function CallbackServer() {
                                     "bg-black/30 rounded p-3 font-mono text-xs text-red-300 overflow-auto whitespace-pre-wrap break-all max-w-full transition-all",
                                     isExpanded ? "max-h-[70vh]" : "max-h-32"
                                   )}>
-                                    {decoded}
+                                    <HighlightText text={decoded} />
                                   </pre>
                                 </div>
                               )
@@ -1001,9 +1066,9 @@ export default function CallbackServer() {
                                 )}>
                                   {record.method}
                                 </span>
-                                <span className="text-theme-text">{record.path}</span>
+                                <HighlightText text={record.path || ''} className="text-theme-text" />
                                 {record.query_string && (
-                                  <span className="text-theme-primary">?{record.query_string}</span>
+                                  <HighlightText text={'?' + record.query_string} className="text-theme-primary" />
                                 )}
                               </div>
                             </div>
@@ -1016,7 +1081,7 @@ export default function CallbackServer() {
                                   User-Agent
                                 </h4>
                                 <div className="bg-theme-bg rounded-lg p-3 font-mono text-xs text-theme-text break-all">
-                                  {record.user_agent}
+                                  <HighlightText text={record.user_agent || ''} />
                                 </div>
                               </div>
                             )}
@@ -1031,8 +1096,8 @@ export default function CallbackServer() {
                                 <div className="bg-theme-bg rounded-lg p-3 font-mono text-xs max-h-48 overflow-auto max-w-full">
                                   {Object.entries(record.headers).map(([key, value]) => (
                                     <div key={key} className="flex py-0.5 border-b border-theme-border/30 last:border-0">
-                                      <span className="text-theme-primary min-w-[180px] font-medium">{key}:</span>
-                                      <span className="text-theme-text break-all">{value}</span>
+                                      <HighlightText text={key + ':'} className="text-theme-primary min-w-[180px] font-medium" />
+                                      <HighlightText text={value} className="text-theme-text break-all" />
                                     </div>
                                   ))}
                                 </div>
@@ -1058,7 +1123,7 @@ export default function CallbackServer() {
                                   </button>
                                 </h4>
                                 <pre className="bg-theme-bg rounded-lg p-3 font-mono text-xs text-theme-text max-h-32 overflow-auto whitespace-pre-wrap break-all max-w-full">
-                                  {record.body}
+                                  <HighlightText text={record.body || ''} />
                                 </pre>
                               </div>
                             )}
@@ -1082,7 +1147,7 @@ export default function CallbackServer() {
                                   </button>
                                 </h4>
                                 <pre className="bg-black/50 rounded-lg p-3 font-mono text-xs text-green-400 max-h-32 overflow-auto whitespace-pre break-all max-w-full border border-green-500/20">
-                                  {record.raw_request}
+                                  <HighlightText text={record.raw_request || ''} />
                                 </pre>
                               </div>
                             )}
