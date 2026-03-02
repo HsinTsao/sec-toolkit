@@ -202,8 +202,14 @@ export const toolsApi = {
   // JWT 工具
   jwtDecode: (token: string) =>
     api.post('/tools/jwt/decode', { token }),
-  jwtEncode: (payload: object, secret: string, algorithm: string = 'HS256') =>
-    api.post('/tools/jwt/encode', { payload, secret, algorithm }),
+  jwtEncode: (payload: object, secret: string, algorithm: string = 'HS256', header?: object) =>
+    api.post('/tools/jwt/encode', { payload, secret, algorithm, header }),
+  jwtVerify: (token: string, key: string, algorithm: string = 'HS256') =>
+    api.post('/tools/jwt/verify', { token, key, algorithm }),
+  jwtAlgorithms: () =>
+    api.get('/tools/jwt/algorithms'),
+  jwtGenerateKeys: (algorithm: string = 'RS256', keySize: number = 2048) =>
+    api.post('/tools/jwt/generate-keys', { algorithm, key_size: keySize }),
   
   // 密码工具
   generatePassword: (params: { length?: number; uppercase?: boolean; lowercase?: boolean; digits?: boolean; special?: boolean }) =>
@@ -324,8 +330,8 @@ export const callbackApi = {
     api.patch(`/callback/tokens/${tokenId}/renew`, { expires_hours: expiresHours }),
   
   // 记录查询
-  getRecords: (tokenId: string, limit?: number) =>
-    api.get(`/callback/tokens/${tokenId}/records`, { params: { limit } }),
+  getRecords: (tokenId: string, limit?: number, keyword?: string) =>
+    api.get(`/callback/tokens/${tokenId}/records`, { params: { limit, keyword: keyword || undefined } }),
   clearRecords: (tokenId: string) =>
     api.delete(`/callback/tokens/${tokenId}/records`),
   pollRecords: (tokenId: string, since?: string) =>

@@ -282,6 +282,18 @@ class JWTEncodeRequest(BaseModel):
     payload: dict
     secret: str
     algorithm: str = "HS256"
+    header: dict = None
+
+
+class JWTVerifyRequest(BaseModel):
+    token: str
+    key: str
+    algorithm: str = "HS256"
+
+
+class JWTGenerateKeysRequest(BaseModel):
+    algorithm: str = "RS256"
+    key_size: int = 2048
 
 
 @router.post("/jwt/decode")
@@ -293,13 +305,30 @@ async def jwt_decode(req: JWTDecodeRequest):
 @router.post("/jwt/encode")
 async def jwt_encode(req: JWTEncodeRequest):
     """JWT 编码"""
-    return {"result": jwt_tool.encode_jwt(req.payload, req.secret, req.algorithm)}
+    return {"result": jwt_tool.encode_jwt(req.payload, req.secret, req.algorithm, req.header)}
 
 
 @router.post("/jwt/verify")
-async def jwt_verify(token: str, secret: str):
-    """JWT 验证"""
-    return jwt_tool.verify_jwt(token, secret)
+async def jwt_verify(req: JWTVerifyRequest):
+    """JWT 签名验证"""
+    return jwt_tool.verify_jwt(req.token, req.key, req.algorithm)
+
+
+@router.get("/jwt/algorithms")
+async def jwt_algorithms():
+    """获取支持的 JWT 算法列表"""
+    return jwt_tool.get_jwt_algorithms()
+
+
+@router.post("/jwt/generate-keys")
+async def jwt_generate_keys(req: JWTGenerateKeysRequest):
+    """生成非对称密钥对"""
+    if req.algorithm in jwt_tool.RSA_ALGORITHMS:
+        return jwt_tool.generate_rsa_keypair(req.key_size)
+    elif req.algorithm in jwt_tool.EC_ALGORITHMS:
+        return jwt_tool.generate_ec_keypair(req.algorithm)
+    else:
+        return {"error": f"算法 {req.algorithm} 不需要生成密钥对，请使用对称密钥"}
 
 
 # ==================== 密码工具 ====================

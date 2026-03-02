@@ -152,12 +152,14 @@ export function ToolButton({
       className={cn('btn', variants[variant], 'disabled:opacity-50', className)}
     >
       {loading ? (
-        <span className="flex items-center gap-2">
+        <span className="inline-flex items-center justify-center gap-2 whitespace-nowrap">
           <RotateCcw className="w-4 h-4 animate-spin" />
           处理中...
         </span>
       ) : (
-        children
+        <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap">
+          {children}
+        </span>
       )}
     </button>
   )
