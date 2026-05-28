@@ -10,6 +10,7 @@ from .knowledge import UploadedFile, KnowledgeItem
 from .agent_config import AgentConfig, DEFAULT_SYSTEM_PROMPT, AgentTraceHistory
 from .skill import UserSkill
 from .memory import UserMemory, MemoryCategory
+from .poc_log import PocAccessLog
 
 __all__ = [
     "User",
@@ -24,5 +25,6 @@ __all__ = [
     "AgentTraceHistory",
     "UserSkill",
     "UserMemory", "MemoryCategory",
+    "PocAccessLog",
 ]
 

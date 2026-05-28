@@ -1,6 +1,6 @@
 """API 路由"""
 from fastapi import APIRouter
-from .v1 import auth, notes, tools, bookmarks, users, bypass, callback, llm, knowledge, proxy, agent, skill, memory, revshell
+from .v1 import auth, notes, tools, bookmarks, users, bypass, callback, llm, knowledge, proxy, agent, skill, memory, revshell, poc
 
 api_router = APIRouter()
 
@@ -20,3 +20,4 @@ api_router.include_router(agent.router, tags=["Agent 配置"])
 api_router.include_router(skill.router, tags=["Skill"])
 api_router.include_router(memory.router, tags=["记忆"])
 
+api_router.include_router(poc.router, tags=["Quick PoC"])

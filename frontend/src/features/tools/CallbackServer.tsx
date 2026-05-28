@@ -6,7 +6,7 @@ import {
   AlertCircle, Loader2, Pause, Play, Info,
   BarChart3, Users, FileCode, Link2, Zap, Edit2, X, ExternalLink, Search
 } from 'lucide-react'
-import { callbackApi } from '@/lib/api'
+import { callbackApi, pocApi } from '@/lib/api'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
 
@@ -101,7 +101,7 @@ export default function CallbackServer() {
   const [stats, setStats] = useState<TokenStats | null>(null)
   const [activeTab, setActiveTab] = useState<TabType>('records')
   const [loading, setLoading] = useState(false)
-  const [polling, setPolling] = useState(false)
+  const [pollingTokens, setPollingTokens] = useState<Set<string>>(new Set())
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [expandedRecord, setExpandedRecord] = useState<string | null>(null)
   const [expandedExfil, setExpandedExfil] = useState<string | null>(null)
@@ -133,8 +133,12 @@ export default function CallbackServer() {
   const [searchInput, setSearchInput] = useState('')
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const lastPollTime = useRef<string | null>(null)
+  const pollingIntervalsRef = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map())
+  const lastPollTimeMap = useRef<Map<string, string>>(new Map())
+  const tokensRef = useRef(tokens)
+  tokensRef.current = tokens
+  const selectedTokenRef = useRef(selectedToken)
+  selectedTokenRef.current = selectedToken
 
   // 获取服务器基础 URL
   const getBaseUrl = () => {
@@ -186,19 +190,93 @@ export default function CallbackServer() {
     return new Date(token.expires_at) < new Date()
   }
 
+  // 启动某个 token 的轮询
+  const startPollingForToken = useCallback((tokenId: string) => {
+    if (pollingIntervalsRef.current.has(tokenId)) return
+    if (!lastPollTimeMap.current.has(tokenId)) {
+      lastPollTimeMap.current.set(tokenId, new Date().toISOString())
+    }
+    const interval = setInterval(async () => {
+      try {
+        const { data } = await callbackApi.pollRecords(
+          tokenId,
+          lastPollTimeMap.current.get(tokenId) || undefined
+        )
+        if (data?.count > 0) {
+          lastPollTimeMap.current.set(tokenId, new Date().toISOString())
+          const tokenObj = tokensRef.current.find(t => t.id === tokenId)
+          const tokenLabel = tokenObj?.name || tokenObj?.token || tokenId.slice(0, 8)
+          const newRecordsList = Array.isArray(data.records) ? data.records : []
+
+          if (selectedTokenRef.current?.id === tokenId) {
+            setRecords(prev => {
+              const newRecords = newRecordsList.filter(
+                (r: CallbackRecord) => !prev.some(p => p.id === r.id)
+              )
+              if (newRecords.length > 0) {
+                toast.success(`[${tokenLabel}] 收到 ${newRecords.length} 条新请求!`, {
+                  icon: '🎯',
+                  duration: 3000
+                })
+              }
+              return [...newRecords, ...prev]
+            })
+            loadStats()
+          } else {
+            toast.success(`[${tokenLabel}] 收到 ${data.count} 条新请求!`, {
+              icon: '🎯',
+              duration: 4000
+            })
+          }
+          setTokens(prev => prev.map(t =>
+            t.id === tokenId ? { ...t, record_count: t.record_count + data.count } : t
+          ))
+        }
+      } catch {
+        // 静默处理轮询错误
+      }
+    }, 3000)
+    pollingIntervalsRef.current.set(tokenId, interval)
+  }, [])
+
+  // 停止某个 token 的轮询
+  const stopPollingForToken = useCallback((tokenId: string) => {
+    const interval = pollingIntervalsRef.current.get(tokenId)
+    if (interval) {
+      clearInterval(interval)
+      pollingIntervalsRef.current.delete(tokenId)
+    }
+  }, [])
+
+  // 切换某个 token 的监听状态
+  const togglePolling = useCallback((tokenId: string) => {
+    setPollingTokens(prev => {
+      const next = new Set(prev)
+      if (next.has(tokenId)) {
+        next.delete(tokenId)
+        stopPollingForToken(tokenId)
+      } else {
+        next.add(tokenId)
+        startPollingForToken(tokenId)
+      }
+      return next
+    })
+  }, [startPollingForToken, stopPollingForToken])
+
   // 续期 Token
   const renewToken = async () => {
     if (!selectedToken) return
     setLoading(true)
     try {
       const { data } = await callbackApi.renewToken(selectedToken.id, renewHours)
-      // 更新 tokens 列表和当前选中的 token
       setTokens(prev => prev.map(t => t.id === data.id ? data : t))
       setSelectedToken(data)
       toast.success(`Token 已续期 ${renewHours} 小时`)
       setShowRenewDialog(false)
       // 续期后自动开始监听
-      setPolling(true)
+      if (!pollingTokens.has(data.id)) {
+        togglePolling(data.id)
+      }
     } catch (err: any) {
       toast.error(err.response?.data?.detail || '续期失败')
     } finally {
@@ -208,11 +286,11 @@ export default function CallbackServer() {
 
   // 处理开始监听点击 - 检测是否过期
   const handleStartPolling = () => {
+    if (!selectedToken) return
     if (isTokenExpired(selectedToken)) {
-      // Token 已过期，弹出续期确认框
       setShowRenewDialog(true)
     } else {
-      setPolling(true)
+      togglePolling(selectedToken.id)
     }
   }
 
@@ -220,7 +298,7 @@ export default function CallbackServer() {
   const loadTokens = async () => {
     try {
       const { data } = await callbackApi.getTokens()
-      setTokens(data)
+      setTokens(Array.isArray(data) ? data : [])
     } catch {
       toast.error('加载 Token 列表失败')
     }
@@ -229,8 +307,8 @@ export default function CallbackServer() {
   // 加载 PoC 模板
   const loadPocTemplates = async () => {
     try {
-      const { data } = await callbackApi.getPocTemplates()
-      setPocTemplates(data.templates)
+      const { data } = await pocApi.templates()
+      setPocTemplates(data.templates || {})
     } catch {}
   }
 
@@ -239,7 +317,7 @@ export default function CallbackServer() {
     if (!selectedToken) return
     try {
       const { data } = await callbackApi.getPocRules(selectedToken.id)
-      setPocRules(data)
+      setPocRules(Array.isArray(data) ? data : [])
     } catch {}
   }
 
@@ -248,9 +326,8 @@ export default function CallbackServer() {
     loadTokens()
     loadPocTemplates()
     return () => {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current)
-      }
+      pollingIntervalsRef.current.forEach(interval => clearInterval(interval))
+      pollingIntervalsRef.current.clear()
     }
   }, [])
 
@@ -260,7 +337,9 @@ export default function CallbackServer() {
       loadRecords()
       loadPocRules()
       loadStats()
-      lastPollTime.current = new Date().toISOString()
+      if (!lastPollTimeMap.current.has(selectedToken.id)) {
+        lastPollTimeMap.current.set(selectedToken.id, new Date().toISOString())
+      }
     } else {
       setRecords([])
       setStats(null)
@@ -269,46 +348,19 @@ export default function CallbackServer() {
     setSearchKeyword('')
   }, [selectedToken])
 
-  // 轮询处理
+  // 同步轮询定时器：pollingTokens 变化时，确保对应的定时器存在或被清除
   useEffect(() => {
-    if (polling && selectedToken) {
-      pollingRef.current = setInterval(async () => {
-        try {
-          const { data } = await callbackApi.pollRecords(
-            selectedToken.id,
-            lastPollTime.current || undefined
-          )
-          if (data.count > 0) {
-            setRecords(prev => {
-              const newRecords = data.records.filter(
-                (r: CallbackRecord) => !prev.some(p => p.id === r.id)
-              )
-              if (newRecords.length > 0) {
-                toast.success(`收到 ${newRecords.length} 条新请求!`, {
-                  icon: '🎯',
-                  duration: 3000
-                })
-              }
-              return [...newRecords, ...prev]
-            })
-            lastPollTime.current = new Date().toISOString()
-            // 更新统计（会自动同步 token 列表中的数量）
-            loadStats()
-          }
-        } catch {
-          // 静默处理轮询错误
-        }
-      }, 3000)
-    } else if (pollingRef.current) {
-      clearInterval(pollingRef.current)
-    }
-    
-    return () => {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current)
+    pollingTokens.forEach(tokenId => {
+      if (!pollingIntervalsRef.current.has(tokenId)) {
+        startPollingForToken(tokenId)
       }
-    }
-  }, [polling, selectedToken])
+    })
+    pollingIntervalsRef.current.forEach((_, tokenId) => {
+      if (!pollingTokens.has(tokenId)) {
+        stopPollingForToken(tokenId)
+      }
+    })
+  }, [pollingTokens, startPollingForToken, stopPollingForToken])
 
   // 加载记录（支持关键字搜索）
   const loadRecords = async (keyword?: string) => {
@@ -317,7 +369,7 @@ export default function CallbackServer() {
     try {
       const kw = keyword !== undefined ? keyword : searchKeyword
       const { data } = await callbackApi.getRecords(selectedToken.id, undefined, kw || undefined)
-      setRecords(data)
+      setRecords(Array.isArray(data) ? data : [])
       loadStats()
     } catch {
       toast.error('加载记录失败')
@@ -382,6 +434,16 @@ export default function CallbackServer() {
     if (!confirm('确定删除此 Token 及其所有记录？')) return
     try {
       await callbackApi.deleteToken(tokenId)
+      // 清理该 token 的轮询
+      if (pollingTokens.has(tokenId)) {
+        stopPollingForToken(tokenId)
+        setPollingTokens(prev => {
+          const next = new Set(prev)
+          next.delete(tokenId)
+          return next
+        })
+      }
+      lastPollTimeMap.current.delete(tokenId)
       setTokens(prev => prev.filter(t => t.id !== tokenId))
       if (selectedToken?.id === tokenId) {
         setSelectedToken(null)
@@ -651,14 +713,46 @@ export default function CallbackServer() {
                 )}
               >
                 <div className="flex items-center justify-between mb-1">
-                  <span className="font-mono text-sm text-theme-text truncate flex-1">
-                    {token.name || token.token}
-                  </span>
-                  {isTokenExpired(token) && (
-                    <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded">
-                      已过期
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    {pollingTokens.has(token.id) && (
+                      <span className="relative flex h-2 w-2 flex-shrink-0">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                      </span>
+                    )}
+                    <span className="font-mono text-sm text-theme-text truncate">
+                      {token.name || token.token}
                     </span>
-                  )}
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    {isTokenExpired(token) && (
+                      <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded">
+                        已过期
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (isTokenExpired(token)) return
+                        togglePolling(token.id)
+                      }}
+                      className={cn(
+                        'p-1 rounded transition-colors',
+                        isTokenExpired(token)
+                          ? 'text-theme-muted/30 cursor-not-allowed'
+                          : pollingTokens.has(token.id)
+                            ? 'text-green-400 hover:text-red-400 hover:bg-red-500/10'
+                            : 'text-theme-muted hover:text-green-400 hover:bg-green-500/10'
+                      )}
+                      title={pollingTokens.has(token.id) ? '停止监听' : '开始监听'}
+                    >
+                      {pollingTokens.has(token.id) ? (
+                        <Pause className="w-3 h-3" />
+                      ) : (
+                        <Play className="w-3 h-3" />
+                      )}
+                    </button>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between text-xs text-theme-muted">
                   <span className="flex items-center gap-1">
@@ -717,13 +811,13 @@ export default function CallbackServer() {
                     </span>
                   )}
                   <button
-                    onClick={() => polling ? setPolling(false) : handleStartPolling()}
+                    onClick={() => pollingTokens.has(selectedToken.id) ? togglePolling(selectedToken.id) : handleStartPolling()}
                     className={cn(
                       'btn btn-sm flex items-center gap-1',
-                      polling ? 'btn-primary' : isTokenExpired(selectedToken) ? 'btn-warning' : 'btn-secondary'
+                      pollingTokens.has(selectedToken.id) ? 'btn-primary' : isTokenExpired(selectedToken) ? 'btn-warning' : 'btn-secondary'
                     )}
                   >
-                    {polling ? (
+                    {pollingTokens.has(selectedToken.id) ? (
                       <>
                         <Pause className="w-3.5 h-3.5" />
                         停止监听
@@ -736,7 +830,7 @@ export default function CallbackServer() {
                     )}
                   </button>
                   <button
-                    onClick={loadRecords}
+                    onClick={() => loadRecords()}
                     disabled={loading}
                     className="btn btn-secondary btn-sm"
                     title="刷新"
@@ -854,7 +948,7 @@ export default function CallbackServer() {
                       <AlertCircle className="w-10 h-10 mx-auto mb-3 opacity-50" />
                       <p>暂无请求记录</p>
                       <p className="text-sm mt-1">
-                        {polling ? '正在监听中...' : '点击"开始监听"实时接收请求'}
+                        {selectedToken && pollingTokens.has(selectedToken.id) ? '正在监听中...' : '点击"开始监听"实时接收请求'}
                       </p>
                     </div>
                   ) : (

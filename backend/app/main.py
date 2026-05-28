@@ -82,6 +82,11 @@ async def lifespan(app: FastAPI):
     from .agent.skill import register_builtin_skills
     register_builtin_skills()
     logger.info("预置 Skill 注册完成")
+
+    # 注册 PoC handlers
+    from .poc import poc_registry
+    poc_registry.auto_discover()
+    logger.info("PoC handler 注册完成")
     
     logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} 启动成功")
     yield
@@ -205,3 +210,61 @@ async def callback_handler_with_path(request: Request, token: str, path: str, db
     """
     return await handle_callback(request, token, path, db)
 
+
+# ==================== Quick PoC 公开端点 ====================
+from .poc import poc_registry
+from .poc.base import PocRequest as PocReq
+from .models.poc_log import PocAccessLog
+from fastapi.responses import PlainTextResponse, Response, RedirectResponse
+
+
+async def _handle_poc(request: Request, name: str, sub_path: str, db: AsyncSession):
+    """处理 PoC 请求"""
+    meta = poc_registry.get(name)
+    if not meta:
+        return PlainTextResponse("PoC Not Found", status_code=404)
+
+    meta.hit_count += 1
+    poc_req = await PocReq.from_fastapi(request, name, sub_path)
+
+    if meta.record:
+        log = PocAccessLog(
+            poc_name=name,
+            client_ip=poc_req.client_ip,
+            method=poc_req.method,
+            path=sub_path or "/",
+            query_string=str(request.url.query) if request.url.query else None,
+            headers=dict(request.headers),
+            body=poc_req.body,
+            user_agent=request.headers.get("user-agent"),
+        )
+        db.add(log)
+
+    try:
+        result = await meta.handler(poc_req)
+    except Exception as e:
+        return PlainTextResponse(f"Handler Error: {e}", status_code=500)
+
+    if result.redirect_url:
+        return RedirectResponse(url=result.redirect_url, status_code=result.status_code or 302)
+
+    ct = result.content_type or "text/plain"
+    if ct.startswith("text/") and "charset" not in ct:
+        ct = f"{ct}; charset=utf-8"
+
+    headers = dict(result.headers) if result.headers else {}
+    headers["Content-Type"] = ct
+
+    return Response(content=result.body, status_code=result.status_code, headers=headers)
+
+
+@app.api_route("/p/{name}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+               tags=["Quick PoC"], summary="PoC 端点")
+async def poc_handler(request: Request, name: str, db: AsyncSession = Depends(get_db)):
+    return await _handle_poc(request, name, "", db)
+
+
+@app.api_route("/p/{name}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+               tags=["Quick PoC"], summary="PoC 端点（带子路径）")
+async def poc_handler_with_path(request: Request, name: str, path: str, db: AsyncSession = Depends(get_db)):
+    return await _handle_poc(request, name, path, db)

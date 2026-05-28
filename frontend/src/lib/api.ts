@@ -300,6 +300,12 @@ export const toolsApi = {
     timeout: 600000
   }),
   getResourceTypes: () => api.get('/tools/crawler/resource-types'),
+
+  // CSP 评估工具
+  cspFetchAndEvaluate: (url: string, cspVersion: number = 3) =>
+    api.post('/tools/csp/fetch', { url, csp_version: cspVersion }),
+  cspEvaluate: (csp: string, cspVersion: number = 3) =>
+    api.post('/tools/csp/evaluate', { csp, csp_version: cspVersion }),
 }
 
 // ==================== Bookmarks API ====================
@@ -342,7 +348,7 @@ export const callbackApi = {
     api.get(`/callback/tokens/${tokenId}/stats`),
   // PoC 规则
   getPocTemplates: () =>
-    api.get('/callback/poc-templates'),
+    api.get('/poc/templates'),
   getPocRules: (tokenId: string) =>
     api.get(`/callback/tokens/${tokenId}/rules`),
   createPocRule: (tokenId: string, data: {
@@ -608,3 +614,13 @@ export const bypassApi = {
     api.get<{ templates: Record<string, string> }>('/bypass/templates'),
 }
 
+
+// ==================== Quick PoC API ====================
+export const pocApi = {
+  list: () =>
+    api.get('/poc/list'),
+  templates: () =>
+    api.get('/poc/templates'),
+  getLogs: (name: string, limit?: number) =>
+    api.get(`/poc/${name}/logs`, { params: { limit } }),
+}

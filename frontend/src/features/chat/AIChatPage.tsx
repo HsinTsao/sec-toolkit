@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Loader2 } from 'lucide-react'
-import { cn } from '@/lib/utils'
 import { TraceTimeline } from '@/components/trace'
 import { AgentConfigPanel } from '@/components/agent'
 import { SkillWelcome } from '@/components/skill/SkillSelector'

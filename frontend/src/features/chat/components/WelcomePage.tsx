@@ -11,7 +11,7 @@ interface WelcomePageProps {
   onOpenSettings: () => void
   onCreateSession: () => string
   onSetInput: (input: string) => void
-  inputRef: React.RefObject<HTMLTextAreaElement | null>
+  inputRef: React.RefObject<HTMLTextAreaElement>
 }
 
 export default function WelcomePage({

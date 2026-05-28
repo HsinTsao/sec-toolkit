@@ -42,7 +42,7 @@ interface ChatInputProps {
   currentProvider: LLMProvider | null
   config: LLMConfig | null
   lastSources: RAGSource[]
-  inputRef: React.RefObject<HTMLTextAreaElement | null>
+  inputRef: React.RefObject<HTMLTextAreaElement>
 }
 
 export default function ChatInput({

@@ -9,7 +9,7 @@ from ...database import get_db
 from ...models import User, Favorite, ToolHistory
 from ...schemas import FavoriteCreate, FavoriteResponse, ToolHistoryCreate, ToolHistoryResponse
 from ...api.deps import get_current_user, get_optional_user
-from ...modules import encoding, crypto, hash_tools, jwt_tool, network, format_tools, crawler
+from ...modules import encoding, crypto, hash_tools, jwt_tool, network, format_tools, crawler, csp
 
 router = APIRouter()
 
@@ -696,4 +696,46 @@ async def get_resource_types():
             {"value": "other", "label": "其他"},
         ]
     }
+
+
+# ==================== CSP 评估工具 ====================
+
+class CSPFetchRequest(BaseModel):
+    """从 URL 获取并评估 CSP"""
+    url: str
+    csp_version: int = 3
+
+
+class CSPEvaluateRequest(BaseModel):
+    """直接评估 CSP 字符串"""
+    csp: str
+    csp_version: int = 3
+
+
+@router.post("/csp/fetch")
+async def csp_fetch_and_evaluate(req: CSPFetchRequest):
+    """获取 URL 的 CSP 头并进行安全评估"""
+    fetch_result = await csp.fetch_csp(req.url)
+    if fetch_result.get("error"):
+        return fetch_result
+
+    raw_csp = fetch_result.get("csp", "")
+    evaluation = csp.evaluate_csp(raw_csp, req.csp_version)
+
+    csp_ro = fetch_result.get("csp_report_only", "")
+    report_only_eval = None
+    if csp_ro:
+        report_only_eval = csp.evaluate_csp(csp_ro, req.csp_version)
+
+    return {
+        **fetch_result,
+        "evaluation": evaluation,
+        "report_only_evaluation": report_only_eval,
+    }
+
+
+@router.post("/csp/evaluate")
+async def csp_evaluate(req: CSPEvaluateRequest):
+    """直接评估给定的 CSP 策略字符串"""
+    return csp.evaluate_csp(req.csp, req.csp_version)
 

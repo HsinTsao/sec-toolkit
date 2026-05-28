@@ -20,6 +20,7 @@ import {
   X,
   Bug,
   Terminal,
+  Zap,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useToolStore } from '@/stores/toolStore'
@@ -48,9 +49,11 @@ const navItems = [
       { name: '密码工具', path: '/tools/password', icon: KeyRound },
       { name: 'WAF 绕过', path: '/tools/bypass', icon: Shield },
       { name: 'OOB 探测', path: '/tools/callback', icon: Radio },
+      { name: 'Quick PoC', path: '/tools/poc', icon: Zap },
       { name: '域名代理', path: '/tools/proxy', icon: Network },
       { name: '资源测试', path: '/tools/crawler', icon: Bug },
       { name: '反弹 Shell', path: '/tools/revshell', icon: Terminal },
+      { name: 'CSP 评估', path: '/tools/csp', icon: Shield },
     ],
   },
 ]

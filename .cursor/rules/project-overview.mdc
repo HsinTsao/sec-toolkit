@@ -1,5 +1,5 @@
 ---
-description: SecToolkit 项目概述和通用规范
+description: SecToolkit 项目概述、架构和完整目录结构
 alwaysApply: true
 ---
 
@@ -7,34 +7,212 @@ alwaysApply: true
 
 ## 项目概述
 
-SecToolkit 是一个个人安全工具库，提供编码/解码、哈希计算、加密解密、JWT 工具、网络工具等功能。
+SecToolkit 是一个个人安全工具库，提供编码/解码、哈希计算、加密解密、JWT 工具、网络工具等功能，内置 LLM Agent 支持自然语言调用工具。
 
 ## 技术栈
 
-- **后端**: FastAPI + SQLAlchemy (异步) + SQLite
+- **后端**: FastAPI + SQLAlchemy (异步 aiosqlite) + SQLite
 - **前端**: React 18 + TypeScript + TailwindCSS + Zustand
-- **API 客户端**: 使用 openapi-ts 自动生成
+- **API 客户端**: `@hey-api/openapi-ts` 自动生成，配置在 `frontend/src/api/setup.ts`
+- **部署**: Docker Compose（backend + frontend/nginx）
 
-## 项目结构
+## 完整项目结构
 
 ```
 sec-toolkit/
-├── backend/app/          # FastAPI 后端
-│   ├── api/v1/           # API 路由
-│   ├── models/           # SQLAlchemy 模型
-│   ├── schemas/          # Pydantic schemas
-│   ├── modules/          # 工具模块实现
-│   └── utils/            # 工具函数
-├── frontend/src/         # React 前端
-│   ├── features/         # 功能页面
-│   ├── components/       # 可复用组件
-│   ├── stores/           # Zustand 状态
-│   └── api/generated/    # 自动生成的 API 客户端
-└── docker-compose.yml    # Docker 部署
+├── start.sh                  # 统一启动脚本（dev/run/stop/status）
+├── docker-compose.yml        # Docker 部署
+├── docker-compose.ssl.yml    # SSL 部署
+├── .env                      # 环境变量
+├── data/                     # 运行时数据（DB、日志）
+│
+├── backend/
+│   ├── Dockerfile
+│   └── app/
+│       ├── main.py           # FastAPI 入口
+│       ├── config.py         # Settings 配置（env 读取）
+│       ├── database.py       # AsyncSession 引擎 + Base
+│       │
+│       ├── core/             # 框架基础设施
+│       │   ├── exceptions.py # 全局异常处理
+│       │   ├── logging.py    # 日志配置
+│       │   └── middleware.py  # 中间件
+│       │
+│       ├── api/
+│       │   ├── deps.py       # 依赖注入（get_current_user、get_db）
+│       │   └── v1/           # API 路由（每个文件一个 router）
+│       │       ├── auth.py       # 认证（登录/注册/刷新 token）
+│       │       ├── users.py      # 用户管理
+│       │       ├── tools.py      # 工具类 API
+│       │       ├── callback.py   # Callback Server（token/record/PoC）
+│       │       ├── notes.py      # 笔记
+│       │       ├── bookmarks.py  # 书签
+│       │       ├── knowledge.py  # 知识库（RAG）
+│       │       ├── memory.py     # 对话记忆
+│       │       ├── llm.py        # LLM 配置与对话
+│       │       ├── agent.py      # Agent 路由
+│       │       ├── skill.py      # Agent 技能管理
+│       │       ├── bypass.py     # WAF 绕过
+│       │       ├── proxy.py      # 代理工具
+│       │       └── revshell.py   # 反弹 Shell 生成
+│       │
+│       ├── models/           # SQLAlchemy 模型（UUID 主键）
+│       │   ├── user.py       ├── note.py
+│       │   ├── bookmark.py   ├── callback.py
+│       │   ├── knowledge.py  ├── memory.py
+│       │   ├── llm_config.py ├── agent_config.py
+│       │   ├── skill.py      ├── tool.py
+│       │   └── poc_rule.py
+│       │
+│       ├── schemas/          # Pydantic 请求/响应模型
+│       │   ├── user.py       ├── note.py
+│       │   ├── bookmark.py   ├── callback.py
+│       │   ├── knowledge.py  ├── memory.py
+│       │   ├── llm.py        ├── skill.py
+│       │   └── tool.py
+│       │
+│       ├── services/         # 业务逻辑层（从路由中抽离）
+│       │   └── callback_service.py
+│       │
+│       ├── modules/          # 工具模块实现（纯逻辑，无 FastAPI 依赖）
+│       │   ├── encoding/     # 编码/解码（Base64、URL、Hex 等）
+│       │   ├── hash_tools/   # 哈希计算
+│       │   ├── crypto/       # 加密/解密（AES、RSA 等）
+│       │   ├── jwt_tool/     # JWT 编解码/验证
+│       │   ├── format_tools/ # 格式化工具（JSON、XML 等）
+│       │   ├── network/      # 网络工具（DNS、WHOIS、IP 查询）
+│       │   ├── bypass/       # WAF/过滤器绕过
+│       │   ├── proxy/        # 代理功能
+│       │   ├── revshell/     # 反弹 Shell 生成
+│       │   ├── crawler/      # 爬虫
+│       │   ├── browser/      # 浏览器自动化
+│       │   ├── search/       # 搜索引擎
+│       │   └── stock_analysis/ # 股票分析（analyzer/finance/news/quote/technical）
+│       │
+│       ├── agent/            # LLM Agent 系统
+│       │   ├── base.py       # ToolParameter 定义
+│       │   ├── registry.py   # ToolRegistry（工具注册中心）
+│       │   ├── intent.py     # 意图识别（Intent LLM）
+│       │   ├── executor.py   # 工具执行器
+│       │   ├── context.py    # 对话上下文
+│       │   ├── dual_llm.py   # 双 LLM 架构（Intent + Main）
+│       │   ├── trace.py      # 执行链路追踪
+│       │   ├── tools/        # Agent 可调用的工具
+│       │   │   ├── encoding.py  ├── hash.py
+│       │   │   ├── network.py   ├── search.py
+│       │   │   ├── browser.py   ├── stock.py
+│       │   │   └── memory.py
+│       │   ├── modules/      # Agent 运行模式
+│       │   │   ├── agent_loop.py  # 自主循环
+│       │   │   ├── workflow.py    # 工作流
+│       │   │   ├── rag.py         # RAG 知识库检索
+│       │   │   └── mcp.py         # MCP 协议
+│       │   └── skill/        # Agent 技能系统
+│       │       ├── base.py      ├── builtin.py
+│       │       └── registry.py
+│       │
+│       └── utils/            # 通用工具
+│           └── cache.py      # TTLCache 缓存（支持自定义 ttl）
+│
+└── frontend/
+    ├── Dockerfile
+    ├── nginx.conf            # Nginx 反向代理配置
+    └── src/
+        ├── main.tsx          # 入口（含 import '@/api/setup'）
+        ├── App.tsx           # 路由定义
+        │
+        ├── api/              # API 层
+        │   ├── setup.ts      # 生成客户端配置（拦截器、auth、token 刷新）
+        │   ├── index.ts      # API 导出
+        │   └── generated/    # openapi-ts 自动生成（勿手动修改）
+        │       ├── sdk.gen.ts    # API 函数
+        │       ├── types.gen.ts  # 类型定义
+        │       └── client.gen.ts # HTTP 客户端
+        │
+        ├── lib/
+        │   ├── api.ts        # 手写 API 封装（Axios，渐进迁移到 generated）
+        │   └── utils.ts      # cn() 等工具函数
+        │
+        ├── stores/           # Zustand 状态管理
+        │   ├── authStore.ts     # 认证（token/user）
+        │   ├── llmStore.ts      # LLM 配置
+        │   ├── memoryStore.ts   # 对话记忆
+        │   ├── sidebarStore.ts  # 侧边栏状态
+        │   ├── skillStore.ts    # Agent 技能
+        │   ├── themeStore.ts    # 主题切换
+        │   ├── toolStore.ts     # 工具状态
+        │   └── traceStore.ts    # 执行追踪
+        │
+        ├── hooks/
+        │   ├── useBookmarks.ts  # 书签 hook
+        │   └── useNotes.ts      # 笔记 hook
+        │
+        ├── components/       # 可复用组件
+        │   ├── layout/       # 布局（Header/Sidebar/Layout/StatusBar/CommandPalette）
+        │   ├── ui/           # UI 基础组件（ToolCard）
+        │   ├── agent/        # Agent 配置面板
+        │   ├── skill/        # 技能选择器
+        │   ├── trace/        # 执行链路可视化
+        │   └── IpMap.tsx     # IP 地图组件
+        │
+        └── features/         # 功能页面
+            ├── auth/         # 登录/注册
+            ├── chat/         # AI 对话
+            │   ├── AIChatPage.tsx        # 主页面（编排层）
+            │   ├── components/           # 子组件
+            │   │   ├── ChatSidebar.tsx   # 会话列表
+            │   │   ├── ChatInput.tsx     # 输入区
+            │   │   ├── MessageBubble.tsx # 消息气泡
+            │   │   ├── CodeBlock.tsx     # 代码高亮
+            │   │   ├── WelcomePage.tsx   # 欢迎页
+            │   │   └── SettingsModal.tsx # LLM 设置弹窗
+            │   └── hooks/
+            │       └── useChat.ts        # 核心聊天逻辑 hook
+            ├── knowledge/    # 知识库（笔记/书签）
+            ├── navigation/   # 导航管理
+            ├── notes/        # 笔记页
+            └── tools/        # 安全工具页面（每工具一个 .tsx）
+                ├── EncodingTools.tsx   ├── HashTools.tsx
+                ├── CryptoTools.tsx     ├── JwtTools.tsx
+                ├── FormatTools.tsx     ├── NetworkTools.tsx
+                ├── PasswordTools.tsx   ├── BypassTools.tsx
+                ├── CallbackServer.tsx  ├── ProxyTools.tsx
+                ├── CrawlerTools.tsx    └── RevShellTools.tsx
 ```
+
+## 前端路由
+
+| 路径 | 页面 | 说明 |
+|------|------|------|
+| `/login` `/register` | 认证页 | 登录注册 |
+| `/` | AI Chat | 默认首页 |
+| `/knowledge/notes` | 笔记 | 知识管理 |
+| `/knowledge/bookmarks` | 书签 | 知识管理 |
+| `/knowledge/navigation` | 导航 | 站点导航 |
+| `/tools/encoding` | 编码工具 | Base64/URL/Hex 等 |
+| `/tools/hash` | 哈希工具 | MD5/SHA 等 |
+| `/tools/crypto` | 加解密 | AES/RSA 等 |
+| `/tools/jwt` | JWT 工具 | 编解码/验证 |
+| `/tools/format` | 格式化 | JSON/XML 等 |
+| `/tools/network` | 网络工具 | DNS/WHOIS/IP |
+| `/tools/password` | 密码工具 | 生成/强度检测 |
+| `/tools/bypass` | WAF 绕过 | 过滤器绕过 |
+| `/tools/callback` | Callback | OOB 回调服务 |
+| `/tools/proxy` | 代理 | HTTP 代理 |
+| `/tools/crawler` | 爬虫 | 网页抓取 |
+| `/tools/revshell` | 反弹 Shell | Shell 命令生成 |
+
+## 关键架构模式
+
+1. **API 层双轨制**: 手写 `lib/api.ts`（Axios）+ 自动生成 `api/generated/`（openapi-ts），通过 `api/setup.ts` 统一 auth 拦截器，渐进迁移中
+2. **Agent 双 LLM**: Intent LLM（小模型，意图识别）+ Main LLM（大模型，生成回答），配置在 `config.py`
+3. **Service 层**: 复杂业务逻辑抽离到 `services/`，路由层只做调度和 HTTP 响应
+4. **工具模块**: `modules/` 为纯逻辑无框架依赖，`agent/tools/` 将其注册为 Agent 可调用工具
 
 ## 通用规范
 
 1. **语言**: 所有注释、文档、提交信息使用中文
 2. **API 变更后**: 运行 `npm run generate-api` 重新生成前端 API 客户端
 3. **不要创建**: 不必要的文档文件、测试文件，除非明确要求
+4. **启动服务**: 使用 `./start.sh dev`（开发）或 `./start.sh run`（前台），不要直接运行 uvicorn/vite
+5. **端口**: 前端 `:80`，后端 `:8000`，API 文档 `:8000/api/docs`

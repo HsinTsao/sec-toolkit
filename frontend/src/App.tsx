@@ -18,6 +18,8 @@ import CallbackServer from '@/features/tools/CallbackServer'
 import ProxyTools from '@/features/tools/ProxyTools'
 import CrawlerTools from '@/features/tools/CrawlerTools'
 import RevShellTools from '@/features/tools/RevShellTools'
+import QuickPoc from '@/features/tools/QuickPoc'
+import CspEvaluator from '@/features/tools/CspEvaluator'
 import NotesPage from '@/features/notes/NotesPage'
 import NavigationPage from '@/features/navigation/NavigationPage'
 import BookmarksPage from '@/features/knowledge/BookmarksPage'
@@ -134,6 +136,8 @@ export default function App() {
           <Route path="proxy" element={<ProxyTools />} />
           <Route path="crawler" element={<CrawlerTools />} />
           <Route path="revshell" element={<RevShellTools />} />
+          <Route path="poc" element={<QuickPoc />} />
+          <Route path="csp" element={<CspEvaluator />} />
         </Route>
         
         {/* 旧路由重定向（兼容性） */}

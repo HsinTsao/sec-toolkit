@@ -182,7 +182,6 @@ cmd_stop() {
     # 杀死占用端口的进程
     fuser -k $BACKEND_PORT/tcp 2>/dev/null || true
     fuser -k $FRONTEND_PORT/tcp 2>/dev/null || true
-    fuser -k 443/tcp 2>/dev/null || true
     fuser -k 80/tcp 2>/dev/null || true
     
     # 杀死所有 sec-toolkit 相关的 Python 和 Node 进程
@@ -232,8 +231,7 @@ cmd_dev() {
     echo $! > "$DATA_DIR/backend.pid"
     wait_for_service "backend" 15 && print_success "后端已启动" || { print_error "后端启动失败，查看日志: cat $DATA_DIR/backend.log"; exit 1; }
     
-    # 确保 Nginx 不占用端口（从 lite 模式切回时）
-    nginx -s stop 2>/dev/null || true
+    # 确保 Vite 端口可用（不影响 Nginx 其他站点）
     fuser -k $FRONTEND_PORT/tcp 2>/dev/null || true
     sleep 1
     
