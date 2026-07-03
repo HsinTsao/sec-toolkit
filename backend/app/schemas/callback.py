@@ -9,6 +9,13 @@ from datetime import datetime
 class TokenCreate(BaseModel):
     name: Optional[str] = None
     expires_hours: Optional[int] = 24
+    # 默认回调端点返回时附加的自定义响应头
+    response_headers: Optional[Dict[str, str]] = None
+
+
+class TokenUpdate(BaseModel):
+    name: Optional[str] = None
+    response_headers: Optional[Dict[str, str]] = None
 
 
 class TokenRenew(BaseModel):
@@ -24,6 +31,7 @@ class TokenResponse(BaseModel):
     expires_at: Optional[datetime]
     is_active: bool
     record_count: int = 0
+    response_headers: Optional[Dict[str, str]] = None
 
     class Config:
         from_attributes = True

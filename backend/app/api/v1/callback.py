@@ -14,7 +14,7 @@ from ...models.poc_rule import PocRule
 from ...api.deps import get_current_user
 from ...models import User
 from ...schemas.callback import (
-    TokenCreate, TokenRenew, TokenResponse,
+    TokenCreate, TokenUpdate, TokenRenew, TokenResponse,
     RecordResponse, PocRuleCreate, PocRuleUpdate, PocRuleResponse,
 )
 from ...services.callback_service import (
@@ -22,6 +22,7 @@ from ...services.callback_service import (
     create_token as svc_create_token,
     list_tokens as svc_list_tokens,
     get_user_token,
+    update_token as svc_update_token,
     delete_token as svc_delete_token,
     renew_token as svc_renew_token,
     get_records as svc_get_records,
@@ -57,6 +58,20 @@ async def list_tokens(
 ):
     """获取当前用户的所有 Token"""
     return await svc_list_tokens(db, current_user.id)
+
+
+@router.patch("/tokens/{token_id}", response_model=TokenResponse)
+async def update_token(
+    token_id: str,
+    req: TokenUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """更新 Token 配置（备注名称、自定义响应头）"""
+    result = await svc_update_token(db, token_id, current_user.id, req)
+    if not result:
+        raise HTTPException(status_code=404, detail="Token not found")
+    return result
 
 
 @router.delete("/tokens/{token_id}")
@@ -399,6 +414,11 @@ async def handle_callback(request: Request, token: str, path: str, db: AsyncSess
             return PlainTextResponse(f"PoC Rule '{rule_name}' not found", status_code=404)
 
     base_headers = {"Referrer-Policy": "unsafe-url"}
+    # 附加用户为该 Token 配置的自定义响应头（如 Access-Control-Allow-Origin）
+    custom_headers = db_token.response_headers or {}
+    for k, v in custom_headers.items():
+        if k and v is not None:
+            base_headers[str(k)] = str(v)
 
     if is_expired:
         return PlainTextResponse("Token Expired (but recorded)", status_code=410, headers=base_headers)

@@ -4,7 +4,7 @@ import {
   Radio, Copy, Check, Trash2, Plus, RefreshCw,
   Clock, Globe, ChevronDown, ChevronUp,
   AlertCircle, Loader2, Pause, Play, Info,
-  BarChart3, Users, FileCode, Link2, Zap, Edit2, X, ExternalLink, Search
+  BarChart3, Users, FileCode, Link2, Zap, Edit2, X, ExternalLink, Search, Settings
 } from 'lucide-react'
 import { callbackApi, pocApi } from '@/lib/api'
 import toast from 'react-hot-toast'
@@ -19,6 +19,7 @@ interface Token {
   expires_at: string | null
   is_active: boolean
   record_count: number
+  response_headers: Record<string, string> | null
 }
 
 interface CallbackRecord {
@@ -110,6 +111,11 @@ export default function CallbackServer() {
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [showRenewDialog, setShowRenewDialog] = useState(false)
   const [renewHours, setRenewHours] = useState(24)
+
+  // 自定义响应头配置（默认回调端点 /c/{token}）
+  const [showHeadersConfig, setShowHeadersConfig] = useState(false)
+  const [headerPairs, setHeaderPairs] = useState<{ key: string; value: string }[]>([])
+  const [savingHeaders, setSavingHeaders] = useState(false)
   
   // PoC 规则相关状态
   const [pocRules, setPocRules] = useState<PocRule[]>([])
@@ -284,6 +290,60 @@ export default function CallbackServer() {
     }
   }
 
+  // 自定义响应头：常用预设
+  const HEADER_PRESETS: { label: string; key: string; value: string }[] = [
+    { label: 'CORS 任意源', key: 'Access-Control-Allow-Origin', value: '*' },
+    { label: 'CORS 携带凭证', key: 'Access-Control-Allow-Credentials', value: 'true' },
+    { label: 'CORS 允许方法', key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, DELETE, OPTIONS' },
+    { label: 'CORS 允许头', key: 'Access-Control-Allow-Headers', value: '*' },
+    { label: 'CSP 关闭', key: 'Content-Security-Policy', value: "default-src * 'unsafe-inline' 'unsafe-eval'" },
+    { label: '内容类型 JSON', key: 'Content-Type', value: 'application/json' },
+  ]
+
+  const addHeaderPair = (key = '', value = '') => {
+    setHeaderPairs(prev => [...prev, { key, value }])
+  }
+
+  const updateHeaderPair = (index: number, field: 'key' | 'value', val: string) => {
+    setHeaderPairs(prev => prev.map((p, i) => i === index ? { ...p, [field]: val } : p))
+  }
+
+  const removeHeaderPair = (index: number) => {
+    setHeaderPairs(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const applyHeaderPreset = (preset: { key: string; value: string }) => {
+    setHeaderPairs(prev => {
+      const existing = prev.findIndex(p => p.key.toLowerCase() === preset.key.toLowerCase())
+      if (existing >= 0) {
+        return prev.map((p, i) => i === existing ? { key: preset.key, value: preset.value } : p)
+      }
+      return [...prev, { key: preset.key, value: preset.value }]
+    })
+  }
+
+  // 保存自定义响应头
+  const saveHeaders = async () => {
+    if (!selectedToken) return
+    const headers: Record<string, string> = {}
+    for (const { key, value } of headerPairs) {
+      const k = key.trim()
+      if (k) headers[k] = value
+    }
+    setSavingHeaders(true)
+    try {
+      const { data } = await callbackApi.updateToken(selectedToken.id, { response_headers: headers })
+      setTokens(prev => prev.map(t => t.id === data.id ? data : t))
+      setSelectedToken(data)
+      toast.success('自定义响应头已保存')
+      setShowHeadersConfig(false)
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || '保存失败')
+    } finally {
+      setSavingHeaders(false)
+    }
+  }
+
   // 处理开始监听点击 - 检测是否过期
   const handleStartPolling = () => {
     if (!selectedToken) return
@@ -346,6 +406,9 @@ export default function CallbackServer() {
     }
     setSearchInput('')
     setSearchKeyword('')
+    setShowHeadersConfig(false)
+    const headers = selectedToken?.response_headers || {}
+    setHeaderPairs(Object.entries(headers).map(([key, value]) => ({ key, value })))
   }, [selectedToken])
 
   // 同步轮询定时器：pollingTokens 变化时，确保对应的定时器存在或被清除
@@ -830,6 +893,16 @@ export default function CallbackServer() {
                     )}
                   </button>
                   <button
+                    onClick={() => setShowHeadersConfig(v => !v)}
+                    className={cn(
+                      'btn btn-secondary btn-sm',
+                      (showHeadersConfig || (selectedToken.response_headers && Object.keys(selectedToken.response_headers).length > 0)) && 'text-theme-primary'
+                    )}
+                    title="自定义响应头"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                  </button>
+                  <button
                     onClick={() => loadRecords()}
                     disabled={loading}
                     className="btn btn-secondary btn-sm"
@@ -863,6 +936,96 @@ export default function CallbackServer() {
                   支持路径：<code className="bg-theme-bg px-1 rounded">{getFullUrl(selectedToken.url)}/payload-id</code>
                 </div>
               </div>
+
+              {/* 自定义响应头配置 */}
+              {showHeadersConfig && (
+                <div className="mt-3 p-3 bg-theme-bg rounded-lg border border-theme-border space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-medium text-theme-text flex items-center gap-2">
+                      <Settings className="w-4 h-4 text-theme-primary" />
+                      自定义响应头
+                    </h4>
+                    <span className="text-xs text-theme-muted">
+                      访问 <code className="bg-theme-card px-1 rounded">/c/{selectedToken.token}</code> 时附加到响应
+                    </span>
+                  </div>
+
+                  {/* 常用预设 */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {HEADER_PRESETS.map((preset) => (
+                      <button
+                        key={preset.key + preset.value}
+                        onClick={() => applyHeaderPreset(preset)}
+                        className="px-2 py-0.5 text-xs rounded bg-theme-card border border-theme-border text-theme-muted hover:text-theme-primary hover:border-theme-primary/50 transition-colors"
+                        title={`${preset.key}: ${preset.value}`}
+                      >
+                        + {preset.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* 键值对编辑 */}
+                  <div className="space-y-2">
+                    {headerPairs.length === 0 ? (
+                      <p className="text-xs text-theme-muted py-1">暂无自定义响应头，点击上方预设或下方按钮添加。</p>
+                    ) : (
+                      headerPairs.map((pair, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={pair.key}
+                            onChange={(e) => updateHeaderPair(idx, 'key', e.target.value)}
+                            placeholder="Header 名称"
+                            className="flex-1 px-2 py-1.5 text-xs bg-theme-card border border-theme-border rounded font-mono focus:outline-none focus:border-theme-primary/50"
+                          />
+                          <span className="text-theme-muted text-xs">:</span>
+                          <input
+                            type="text"
+                            value={pair.value}
+                            onChange={(e) => updateHeaderPair(idx, 'value', e.target.value)}
+                            placeholder="Header 值，如 https://attacker.com"
+                            className="flex-[2] px-2 py-1.5 text-xs bg-theme-card border border-theme-border rounded font-mono focus:outline-none focus:border-theme-primary/50"
+                          />
+                          <button
+                            onClick={() => removeHeaderPair(idx)}
+                            className="p-1 text-theme-muted hover:text-red-400 flex-shrink-0"
+                            title="删除"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={() => addHeaderPair()}
+                      className="text-xs text-theme-primary hover:text-theme-primary/80 flex items-center gap-1"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      添加响应头
+                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setShowHeadersConfig(false)}
+                        className="btn btn-secondary btn-sm"
+                        disabled={savingHeaders}
+                      >
+                        取消
+                      </button>
+                      <button
+                        onClick={saveHeaders}
+                        disabled={savingHeaders}
+                        className="btn btn-primary btn-sm flex items-center gap-1"
+                      >
+                        {savingHeaders ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                        保存
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Tab 切换 */}
               <div className="flex gap-2 mt-3">

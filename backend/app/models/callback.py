@@ -17,6 +17,8 @@ class CallbackToken(Base):
     created_at = Column(DateTime, server_default=func.now())
     expires_at = Column(DateTime, nullable=True)  # 过期时间
     is_active = Column(Integer, default=1)  # 是否激活
+    # 默认回调端点（/c/{token}）返回时附加的自定义响应头，如 Access-Control-Allow-Origin
+    response_headers = Column(JSON, default=dict)
 
 
 class CallbackRecord(Base):

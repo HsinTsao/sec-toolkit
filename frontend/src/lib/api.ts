@@ -326,10 +326,12 @@ export const bookmarksApi = {
 // ==================== Callback API ====================
 export const callbackApi = {
   // Token 管理
-  createToken: (data: { name?: string; expires_hours?: number }) =>
+  createToken: (data: { name?: string; expires_hours?: number; response_headers?: Record<string, string> }) =>
     api.post('/callback/tokens', data),
   getTokens: () =>
     api.get('/callback/tokens'),
+  updateToken: (tokenId: string, data: { name?: string; response_headers?: Record<string, string> }) =>
+    api.patch(`/callback/tokens/${tokenId}`, data),
   deleteToken: (tokenId: string) =>
     api.delete(`/callback/tokens/${tokenId}`),
   renewToken: (tokenId: string, expiresHours: number = 24) =>

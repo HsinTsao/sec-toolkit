@@ -9,7 +9,7 @@ from sqlalchemy import select, delete, func, or_
 from ..models.callback import CallbackToken, CallbackRecord
 from ..models.poc_rule import PocRule
 from ..schemas.callback import (
-    TokenCreate, TokenRenew, TokenResponse,
+    TokenCreate, TokenUpdate, TokenRenew, TokenResponse,
     RecordResponse, PocRuleCreate, PocRuleUpdate, PocRuleResponse,
 )
 from ..config import settings
@@ -28,6 +28,7 @@ def _build_token_response(t: CallbackToken, record_count: int = 0) -> TokenRespo
         url=get_callback_url(f"/c/{t.token}"),
         created_at=t.created_at, expires_at=t.expires_at,
         is_active=bool(t.is_active), record_count=record_count,
+        response_headers=t.response_headers or {},
     )
 
 
@@ -74,11 +75,37 @@ async def create_token(
 
     db_token = CallbackToken(
         token=token, name=req.name, user_id=user_id, expires_at=expires_at,
+        response_headers=req.response_headers or {},
     )
     db.add(db_token)
     await db.flush()
     await db.refresh(db_token)
     return _build_token_response(db_token, 0)
+
+
+async def update_token(
+    db: AsyncSession, token_id: str, user_id: str, req: TokenUpdate
+) -> Optional[TokenResponse]:
+    """更新 Token 配置（备注名称、自定义响应头）"""
+    token = await get_user_token(db, token_id, user_id)
+    if not token:
+        return None
+
+    update_data = req.model_dump(exclude_unset=True)
+    if 'name' in update_data:
+        token.name = update_data['name']
+    if 'response_headers' in update_data:
+        token.response_headers = update_data['response_headers'] or {}
+
+    await db.flush()
+    await db.refresh(token)
+
+    count_result = await db.execute(
+        select(func.count()).select_from(CallbackRecord)
+        .where(CallbackRecord.token_id == token.id)
+    )
+    count = count_result.scalar() or 0
+    return _build_token_response(token, count)
 
 
 async def list_tokens(db: AsyncSession, user_id: str) -> list[TokenResponse]:
