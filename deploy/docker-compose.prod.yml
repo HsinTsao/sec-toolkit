@@ -1,25 +1,29 @@
 # Security Toolkit 生产部署配置
-# 使用 export-image.sh 打包的镜像
 #
-# 配置方式: 编辑 .env 文件，所有配置会自动传递给后端容器
-# 新增配置无需修改此文件，只需在 .env 中添加即可
+# 此文件用于两种场景：
+# 1. GitHub 拉代码到服务器后，在仓库 deploy/ 目录执行
+# 2. 使用 export-image.sh 生成的离线包，在解压目录执行
 #
-# 启动命令: docker compose -f docker-compose.prod.yml up -d
+# 关键原则：
+# - 数据库落在宿主机 ./data，而不是 Docker named volume
+# - .env 由宿主机维护，不随镜像覆盖
+# - 默认使用已有镜像；需要源码构建时请改用仓库根目录 docker-compose.yml
 
 services:
-  # 后端 API
   backend:
     image: sec-toolkit-backend:latest
     container_name: toolkit-backend
     restart: unless-stopped
+    init: true
     ports:
-      - "8000:8000"
+      - "${APP_API_PORT:-8000}:8000"
     volumes:
-      - toolkit-data:/app/data
+      - ${APP_DATA_DIR:-./data}:/app/data
     env_file:
       - .env
     environment:
       - LOG_FILE=/app/data/backend.log
+      - PYTHONUNBUFFERED=1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -40,13 +44,13 @@ services:
         max-size: "50m"
         max-file: "5"
 
-  # 前端
   frontend:
     image: sec-toolkit-frontend:latest
     container_name: toolkit-frontend
     restart: unless-stopped
+    init: true
     ports:
-      - "80:80"
+      - "${APP_HTTP_PORT:-80}:80"
     depends_on:
       backend:
         condition: service_healthy
@@ -69,10 +73,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-volumes:
-  toolkit-data:
-    driver: local
 
 networks:
   toolkit-network:

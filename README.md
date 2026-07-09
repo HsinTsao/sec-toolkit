@@ -29,58 +29,71 @@
 
 ## 🚀 服务器部署
 
-### 方式一：镜像打包部署 (推荐) ⭐
+### 推荐方式：GitHub 拉代码 + Docker 部署
 
-**完全离线部署，不依赖任何第三方服务！**
+这是当前推荐的产线路径。不要在服务器继续使用 `./start.sh dev`。
 
-#### 本地打包
-
-```bash
-# 在本地开发机上运行
-./export-image.sh
-
-# 输出: deploy/sec-toolkit-deploy.tar.gz
-```
-
-#### 上传到服务器
+#### 首次安装
 
 ```bash
-scp deploy/sec-toolkit-deploy.tar.gz user@your-server:~/
-```
-
-#### 服务器安装
-
-```bash
-# SSH 登录服务器
-ssh user@your-server
-
-# 解压部署包
-tar -xzf sec-toolkit-deploy.tar.gz
-
-# 运行安装脚本
-./install.sh
-```
-
-#### 访问地址
-- 前端: `http://服务器IP`
-- API 文档: `http://服务器IP:8000/api/docs`
-
----
-
-### 方式二：脚本部署 (需下载代码)
-
-```bash
-# 1. 克隆项目到服务器
 git clone https://github.com/yourname/security-toolkit.git
 cd security-toolkit
 
-# 2. 一键部署
-./start.sh prod        # HTTP 模式
-./start.sh prod-ssl    # HTTPS 模式 🔒
+./deploy/install.sh
+```
 
-# 访问
-# HTTP:  http://服务器IP
-# HTTPS: https://服务器IP
+首次安装会做这些事：
+
+- 生成 `.env`（如果还没有）
+- 保留现有 `./data/toolkit.db`
+- 自动备份数据库到 `./backups/`
+- 构建 Docker 镜像并启动服务
+- 运行数据库迁移脚本
+
+#### 日常发布
+
+```bash
+cd security-toolkit
+
+./deploy/deploy.sh
+```
+
+默认发布流程：
+
+- `git fetch` + `git pull --ff-only`
+- 备份 `./data/toolkit.db`
+- `docker compose build`
+- 运行 `python scripts/migrate_db.py`
+- `docker compose up -d`
+
+#### 数据库和数据目录
+
+- 生产数据库默认路径：`./data/toolkit.db`
+- 自动备份目录：`./backups/`
+- Docker 部署使用宿主机 bind mount，不再使用 Docker named volume
+
+#### 访问地址
+
+- 前端：`http://服务器IP`
+- API 文档：`http://服务器IP:8000/api/docs`
+
+---
+
+### 可选方式：离线镜像包部署
+
+适合不能直接从 GitHub 拉代码的环境。
+
+```bash
+# 本地打包
+./export-image.sh
+
+# 上传到服务器
+scp deploy/sec-toolkit-deploy.tar.gz user@your-server:~/
+
+# 服务器解压并安装
+ssh user@your-server
+tar -xzf sec-toolkit-deploy.tar.gz
+./install.sh
 ```
 
 ---
@@ -137,6 +150,19 @@ npm run dev
 ```
 
 生产环境建议使用 [Let's Encrypt](https://letsencrypt.org/) 证书。
+
+## 📦 运维说明
+
+```bash
+# 查看服务状态
+docker compose ps
+
+# 查看日志
+docker compose logs -f
+
+# 手动备份数据库
+./deploy/backup-db.sh
+```
 
 ---
 

@@ -12,6 +12,7 @@ build/
 
 # 数据
 data/
+backups/
 backend/data/
 *.db
 *.db-*
@@ -54,4 +55,3 @@ deploy/*.zip
 # 其他
 *.bak
 *.tmp
-

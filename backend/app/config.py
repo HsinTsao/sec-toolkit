@@ -1,5 +1,5 @@
 """应用配置"""
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from typing import Optional
 from pathlib import Path
@@ -25,6 +25,12 @@ else:
 
 class Settings(BaseSettings):
     """应用设置"""
+    model_config = SettingsConfigDict(
+        env_file=str(_env_file) if _env_file else ".env",
+        case_sensitive=True,
+        extra="ignore",
+    )
+
     # 应用
     APP_NAME: str = "Security Toolkit"
     APP_VERSION: str = "1.0.0"
@@ -75,11 +81,6 @@ class Settings(BaseSettings):
     # 例如: http://36.151.151.24:9000 或 https://oob.example.com
     CALLBACK_BASE_URL: Optional[str] = None
     
-    class Config:
-        env_file = str(_env_file) if _env_file else ".env"
-        case_sensitive = True
-
-
 @lru_cache()
 def get_settings() -> Settings:
     """获取配置单例"""

@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 
 # 安装依赖
-RUN npm install
+RUN npm ci
 
 # 复制源码
 COPY . .
@@ -30,4 +30,3 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf
 EXPOSE 80 443
 
 CMD ["nginx", "-g", "daemon off;"]
-

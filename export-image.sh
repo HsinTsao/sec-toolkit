@@ -4,7 +4,7 @@
 # 构建并导出 Docker 镜像，用于服务器离线部署
 #
 # 用法: ./export-image.sh
-# 输出: deploy/sec-toolkit-deploy.tar.gz (包含镜像和配置文件)
+# 输出: deploy/sec-toolkit-deploy.tar.gz (包含镜像和部署脚本)
 
 set -e
 
@@ -81,7 +81,10 @@ cd "$OUTPUT_DIR"
 tar -czf sec-toolkit-deploy.tar.gz \
     sec-toolkit-images.tar \
     docker-compose.prod.yml \
-    install.sh
+    docker-compose.prod-ssl.yml \
+    install.sh \
+    backup-db.sh \
+    nginx-ssl.conf
 
 # 清理临时文件
 rm -f sec-toolkit-images.tar
@@ -113,8 +116,9 @@ echo -e "${YELLOW}  配置管理:${NC}"
 echo -e "${YELLOW}═══════════════════════════════════════════════════${NC}"
 echo ""
 echo "  所有配置集中在 .env 文件中，修改后重启即可生效:"
-echo -e "     ${CYAN}nano .env                                          # 编辑配置${NC}"
-echo -e "     ${CYAN}docker compose -f docker-compose.prod.yml restart  # 重启生效${NC}"
+echo -e "     ${CYAN}nano .env                                              # 编辑配置${NC}"
+echo -e "     ${CYAN}./backup-db.sh                                         # 手动备份数据库${NC}"
+echo -e "     ${CYAN}docker compose -f docker-compose.prod.yml up -d       # 重启生效${NC}"
 echo ""
 echo "  无需重新打包镜像，后端新增的配置项直接在 .env 中添加即可"
 echo ""
