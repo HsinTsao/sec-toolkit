@@ -22,17 +22,21 @@ if [ -d "$REPO_ROOT/backend" ] && [ -f "$REPO_ROOT/docker-compose.yml" ]; then
     COMPOSE_FILE="$REPO_ROOT/docker-compose.yml"
     ENV_EXAMPLE="$REPO_ROOT/env.example"
     BACKUP_SCRIPT="$SCRIPT_DIR/backup-db.sh"
+    PREFLIGHT_SCRIPT="$SCRIPT_DIR/preflight.sh"
 else
     MODE="offline"
     APP_HOME="$SCRIPT_DIR"
     COMPOSE_FILE="$SCRIPT_DIR/docker-compose.prod.yml"
     ENV_EXAMPLE=""
     BACKUP_SCRIPT="$SCRIPT_DIR/backup-db.sh"
+    PREFLIGHT_SCRIPT=""
 fi
 
 ENV_FILE="$APP_HOME/.env"
 DATA_DIR="${APP_DATA_DIR:-$APP_HOME/data}"
 BACKUP_DIR="${APP_BACKUP_DIR:-$APP_HOME/backups}"
+BACKEND_LOG_DIR="${APP_BACKEND_LOG_DIR:-$APP_HOME/logs/backend}"
+NGINX_LOG_DIR="${APP_NGINX_LOG_DIR:-$APP_HOME/logs/nginx}"
 API_PORT="${APP_API_PORT:-8000}"
 HTTP_PORT="${APP_HTTP_PORT:-80}"
 COMPOSE_CMD=()
@@ -53,6 +57,11 @@ detect_compose_cmd() {
         print_error "未找到 Docker Compose，请安装 docker compose 插件或 docker-compose"
         exit 1
     fi
+}
+
+run_preflight() {
+    [ -x "$PREFLIGHT_SCRIPT" ] || return 0
+    "$PREFLIGHT_SCRIPT" --allow-missing-env --allow-legacy-dev
 }
 
 run_compose() {
@@ -194,11 +203,29 @@ wait_for_backend() {
     return 1
 }
 
+migrate_legacy_logs() {
+    mkdir -p "$BACKEND_LOG_DIR" "$NGINX_LOG_DIR"
+
+    if [ -f "$DATA_DIR/backend.log" ] && [ ! -f "$BACKEND_LOG_DIR/backend-dev.log" ]; then
+        cp "$DATA_DIR/backend.log" "$BACKEND_LOG_DIR/backend-dev.log"
+    fi
+
+    if [ -f "$DATA_DIR/backend.error.log" ] && [ ! -f "$BACKEND_LOG_DIR/backend-dev.error.log" ]; then
+        cp "$DATA_DIR/backend.error.log" "$BACKEND_LOG_DIR/backend-dev.error.log"
+    fi
+
+    if [ -f "$DATA_DIR/frontend.log" ] && [ ! -f "$NGINX_LOG_DIR/frontend-dev.log" ]; then
+        cp "$DATA_DIR/frontend.log" "$NGINX_LOG_DIR/frontend-dev.log"
+    fi
+}
+
 deploy_from_repo() {
     print_info "使用源码仓库模式部署"
 
     mkdir -p "$DATA_DIR" "$BACKUP_DIR"
+    mkdir -p "$BACKEND_LOG_DIR" "$NGINX_LOG_DIR"
     create_env_file
+    migrate_legacy_logs
 
     if [ -x "$BACKUP_SCRIPT" ]; then
         "$BACKUP_SCRIPT"
@@ -223,7 +250,9 @@ deploy_from_offline_package() {
     }
 
     mkdir -p "$DATA_DIR" "$BACKUP_DIR"
+    mkdir -p "$BACKEND_LOG_DIR" "$NGINX_LOG_DIR"
     create_env_file
+    migrate_legacy_logs
 
     if [ -x "$BACKUP_SCRIPT" ]; then
         "$BACKUP_SCRIPT"
@@ -248,6 +277,7 @@ main() {
     require_command curl
     require_command python3
     detect_compose_cmd
+    run_preflight
 
     if [ "$MODE" = "repo" ]; then
         deploy_from_repo
@@ -263,6 +293,8 @@ main() {
     echo "  API 文档: http://127.0.0.1:${API_PORT}/api/docs"
     echo "  数据目录: $DATA_DIR"
     echo "  备份目录: $BACKUP_DIR"
+    echo "  后端日志目录: $BACKEND_LOG_DIR"
+    echo "  Nginx 日志目录: $NGINX_LOG_DIR"
 }
 
 main "$@"

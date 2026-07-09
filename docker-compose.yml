@@ -19,10 +19,11 @@ services:
       - "${APP_API_PORT:-8000}:8000"
     volumes:
       - ${APP_DATA_DIR:-./data}:/app/data
+      - ${APP_BACKEND_LOG_DIR:-./logs/backend}:/app/logs
     env_file:
       - .env
     environment:
-      - LOG_FILE=/app/data/backend.log
+      - LOG_FILE=/app/logs/backend.log
       - PYTHONUNBUFFERED=1
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -56,6 +57,8 @@ services:
     init: true
     ports:
       - "${APP_HTTP_PORT:-80}:80"
+    volumes:
+      - ${APP_NGINX_LOG_DIR:-./logs/nginx}:/var/log/nginx
     depends_on:
       backend:
         condition: service_healthy

@@ -13,6 +13,7 @@ build/
 # 数据
 data/
 backups/
+logs/
 backend/data/
 *.db
 *.db-*

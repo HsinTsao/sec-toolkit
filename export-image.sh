@@ -84,6 +84,7 @@ tar -czf sec-toolkit-deploy.tar.gz \
     docker-compose.prod-ssl.yml \
     install.sh \
     backup-db.sh \
+    preflight.sh \
     nginx-ssl.conf
 
 # 清理临时文件

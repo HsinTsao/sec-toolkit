@@ -46,7 +46,8 @@ cd security-toolkit
 
 - 生成 `.env`（如果还没有）
 - 保留现有 `./data/toolkit.db`
-- 自动备份数据库到 `./backups/`
+- 自动做发布前快照到 `./backups/`
+- 快照包含数据库、上传文件和日志归档
 - 构建 Docker 镜像并启动服务
 - 运行数据库迁移脚本
 
@@ -55,13 +56,14 @@ cd security-toolkit
 ```bash
 cd security-toolkit
 
+./deploy/preflight.sh
 ./deploy/deploy.sh
 ```
 
 默认发布流程：
 
 - `git fetch` + `git pull --ff-only`
-- 备份 `./data/toolkit.db`
+- 备份数据库、上传文件、日志
 - `docker compose build`
 - 运行 `python scripts/migrate_db.py`
 - `docker compose up -d`
@@ -69,7 +71,10 @@ cd security-toolkit
 #### 数据库和数据目录
 
 - 生产数据库默认路径：`./data/toolkit.db`
+- 上传文件默认路径：`./data/uploads/`
 - 自动备份目录：`./backups/`
+- 后端日志目录：`./logs/backend/`
+- Nginx 访问/错误日志目录：`./logs/nginx/`
 - Docker 部署使用宿主机 bind mount，不再使用 Docker named volume
 
 #### 访问地址
@@ -160,7 +165,14 @@ docker compose ps
 # 查看日志
 docker compose logs -f
 
-# 手动备份数据库
+# 服务器预检
+./deploy/preflight.sh
+
+# 查看宿主机持久化日志
+ls logs/backend
+ls logs/nginx
+
+# 手动做完整快照
 ./deploy/backup-db.sh
 ```
 

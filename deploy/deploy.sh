@@ -16,7 +16,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="$PROJECT_DIR/docker-compose.yml"
 BACKUP_SCRIPT="$SCRIPT_DIR/backup-db.sh"
+PREFLIGHT_SCRIPT="$SCRIPT_DIR/preflight.sh"
 COMPOSE_CMD=()
+BACKEND_LOG_DIR="${APP_BACKEND_LOG_DIR:-$PROJECT_DIR/logs/backend}"
+NGINX_LOG_DIR="${APP_NGINX_LOG_DIR:-$PROJECT_DIR/logs/nginx}"
 
 SKIP_GIT="false"
 BRANCH=""
@@ -58,6 +61,11 @@ detect_compose_cmd() {
 
 run_compose() {
     "${COMPOSE_CMD[@]}" "$@"
+}
+
+run_preflight() {
+    [ -x "$PREFLIGHT_SCRIPT" ] || return 0
+    "$PREFLIGHT_SCRIPT" --allow-bound-ports
 }
 
 ensure_no_legacy_dev_processes() {
@@ -114,6 +122,7 @@ main() {
     require_command curl
     require_command python3
     detect_compose_cmd
+    run_preflight
 
     [ -f "$COMPOSE_FILE" ] || {
         print_error "未找到 compose 文件: $COMPOSE_FILE"
@@ -131,6 +140,8 @@ main() {
     if [ -x "$BACKUP_SCRIPT" ]; then
         "$BACKUP_SCRIPT"
     fi
+
+    mkdir -p "$BACKEND_LOG_DIR" "$NGINX_LOG_DIR"
 
     cd "$PROJECT_DIR"
     run_compose -f "$COMPOSE_FILE" config >/dev/null
