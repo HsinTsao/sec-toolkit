@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Zap, Copy, Check, ExternalLink, Globe, ChevronDown, ChevronUp, Loader2, RefreshCw } from 'lucide-react'
+import { Zap, Copy, Check, ExternalLink, Globe, Loader2, RefreshCw } from 'lucide-react'
 import { pocApi } from '@/lib/api'
 import toast from 'react-hot-toast'
 import { cn } from '@/lib/utils'
