@@ -152,7 +152,7 @@ stop_legacy_processes() {
     fi
 
     local stopped="false"
-    local pid_file pid cmd
+    local pid_file pid cmd port
 
     for pid_file in "$DATA_DIR"/*.pid; do
         [ -f "$pid_file" ] || continue
@@ -168,12 +168,25 @@ stop_legacy_processes() {
         rm -f "$pid_file"
     done
 
+    if command -v lsof >/dev/null 2>&1; then
+        for port in "${APP_API_PORT:-8000}" "${APP_HTTP_PORT:-80}"; do
+            while read -r pid; do
+                [ -n "$pid" ] || continue
+                if is_current_project_pid "$pid"; then
+                    print_info "停止旧端口监听进程 PID=$pid PORT=$port"
+                    kill "$pid" 2>/dev/null || true
+                    stopped="true"
+                fi
+            done < <(lsof -t -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | sort -u)
+        done
+    fi
+
     pkill -f "$APP_HOME/backend/venv/bin/uvicorn app.main:app" 2>/dev/null && stopped="true" || true
     pkill -f "$APP_HOME/frontend/.*/vite" 2>/dev/null && stopped="true" || true
     pkill -f "node.*$APP_HOME/frontend.*vite" 2>/dev/null && stopped="true" || true
 
     if [ "$stopped" = "true" ]; then
-        sleep 2
+        sleep 3
     fi
 }
 
