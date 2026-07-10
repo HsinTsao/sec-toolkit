@@ -6,6 +6,9 @@ FROM ${NODE_BASE_IMAGE} AS builder
 
 WORKDIR /app
 
+ARG NPM_CONFIG_REGISTRY=
+ENV NPM_CONFIG_REGISTRY=${NPM_CONFIG_REGISTRY}
+
 # 复制依赖文件
 COPY package.json package-lock.json* ./
 

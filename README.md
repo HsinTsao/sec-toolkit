@@ -93,7 +93,22 @@ NGINX_BASE_IMAGE=nginx:alpine
 
 - 自动只保留最近 `3` 份快照，可通过 `APP_BACKUP_KEEP_COUNT` 调整
 - 发布预检要求至少保留 `3072MB` 空闲磁盘，可通过 `APP_MIN_FREE_SPACE_MB` 调整
-- 发布前默认执行 `docker builder prune -af` 和 `docker image prune -f`
+- 发布前默认执行 `docker image prune -f`
+- 默认不清 `docker builder prune -af`，避免每次发布都丢失构建缓存导致明显变慢
+
+如果你的服务器在国内，Docker build 阶段的 `pip install` / `npm ci` 很慢，建议在 `.env` 中增加：
+
+```bash
+PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
+NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+DEPLOY_PRUNE_BUILD_CACHE=false
+```
+
+这样会同时解决两类常见慢点：
+
+- Python / Node 依赖下载走国内镜像
+- 不再每次发布都清空 Docker build cache
 
 #### 访问地址
 
@@ -226,6 +241,14 @@ docker image prune -af
 APP_BACKUP_KEEP_COUNT=2
 APP_MIN_FREE_SPACE_MB=4096
 ```
+
+如果你确实需要在发布前顺手清理 Docker build cache，可以显式开启：
+
+```bash
+DEPLOY_PRUNE_BUILD_CACHE=true
+```
+
+注意这会让后续 `docker compose build` 失去缓存，重新执行依赖安装，发布会明显变慢。
 
 ## ⚡ 文件式 Quick PoC
 
