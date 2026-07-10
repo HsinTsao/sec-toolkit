@@ -1,5 +1,7 @@
-# 构建阶段
 ARG NODE_BASE_IMAGE=node:20-alpine
+ARG NGINX_BASE_IMAGE=nginx:alpine
+
+# 构建阶段
 FROM ${NODE_BASE_IMAGE} AS builder
 
 WORKDIR /app
@@ -17,7 +19,7 @@ COPY . .
 RUN npm run build
 
 # 生产阶段 - 使用 nginx 服务静态文件
-ARG NGINX_BASE_IMAGE=nginx:alpine
+ARG NGINX_BASE_IMAGE
 FROM ${NGINX_BASE_IMAGE}
 
 # 安装 curl 用于健康检查
