@@ -25,6 +25,7 @@ NGINX_LOG_DIR="${APP_NGINX_LOG_DIR:-$PROJECT_DIR/logs/nginx}"
 UPLOAD_DIR="${APP_UPLOAD_DIR:-$DATA_DIR/uploads}"
 API_PORT="${APP_API_PORT:-8000}"
 HTTP_PORT="${APP_HTTP_PORT:-80}"
+MIN_FREE_SPACE_MB="${APP_MIN_FREE_SPACE_MB:-3072}"
 ALLOW_MISSING_ENV="false"
 ALLOW_LEGACY_DEV="false"
 ALLOW_BOUND_PORTS="false"
@@ -102,6 +103,48 @@ require_command() {
         print_error "缺少命令: $1"
         FAILED="true"
     fi
+}
+
+format_bytes() {
+    python3 - "$1" <<'PY'
+import sys
+
+size = int(sys.argv[1])
+units = ["B", "KB", "MB", "GB", "TB"]
+value = float(size)
+for unit in units:
+    if value < 1024 or unit == units[-1]:
+        if unit == "B":
+            print(f"{int(value)}{unit}")
+        else:
+            print(f"{value:.1f}{unit}")
+        break
+    value /= 1024
+PY
+}
+
+check_disk_space() {
+    local free_bytes min_free_bytes
+
+    case "$MIN_FREE_SPACE_MB" in
+        ''|*[!0-9]*)
+            print_error "APP_MIN_FREE_SPACE_MB 必须是非负整数，当前值: $MIN_FREE_SPACE_MB"
+            FAILED="true"
+            return
+            ;;
+    esac
+
+    min_free_bytes=$((MIN_FREE_SPACE_MB * 1024 * 1024))
+    free_bytes="$(df -Pk "$PROJECT_DIR" | awk 'NR==2 {print $4 * 1024}')"
+
+    if [ "$free_bytes" -lt "$min_free_bytes" ]; then
+        print_error "磁盘剩余空间不足: free=$(format_bytes "$free_bytes"), require>=$(format_bytes "$min_free_bytes")"
+        print_error "建议先清理 backups/、Docker build cache、旧镜像或系统日志"
+        FAILED="true"
+        return
+    fi
+
+    print_success "磁盘剩余空间充足: free=$(format_bytes "$free_bytes")"
 }
 
 check_docker_daemon() {
@@ -226,6 +269,7 @@ main() {
     check_paths
     check_compose_config
     check_data_assets
+    check_disk_space
     check_legacy_dev_processes
     check_port_owner "$API_PORT"
     check_port_owner "$HTTP_PORT"

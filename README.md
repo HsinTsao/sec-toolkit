@@ -73,7 +73,8 @@ NGINX_BASE_IMAGE=nginx:alpine
 默认发布流程：
 
 - `git fetch` + `git pull --ff-only`
-- 备份数据库、上传文件、日志
+- 自动裁剪旧快照后，备份数据库、上传文件、日志
+- 自动清理 Docker build cache / dangling images
 - `docker compose build`
 - 运行 `python scripts/migrate_db.py`
 - `docker compose up -d`
@@ -87,6 +88,12 @@ NGINX_BASE_IMAGE=nginx:alpine
 - 后端日志目录：`./logs/backend/`
 - Nginx 访问/错误日志目录：`./logs/nginx/`
 - Docker 部署使用宿主机 bind mount，不再使用 Docker named volume
+
+空间相关默认策略：
+
+- 自动只保留最近 `3` 份快照，可通过 `APP_BACKUP_KEEP_COUNT` 调整
+- 发布预检要求至少保留 `3072MB` 空闲磁盘，可通过 `APP_MIN_FREE_SPACE_MB` 调整
+- 发布前默认执行 `docker builder prune -af` 和 `docker image prune -f`
 
 #### 访问地址
 
@@ -185,6 +192,39 @@ ls logs/nginx
 
 # 手动做完整快照
 ./deploy/backup-db.sh
+```
+
+如果发布时看到 `sqlite3.OperationalError: database or disk is full`，这通常不是数据库损坏，而是服务器磁盘空间不足，最常见是以下几类空间占满：
+
+- `backups/` 旧快照过多
+- Docker 镜像 / build cache 占满磁盘
+- `logs/backend/` 或 `logs/nginx/` 日志累计过大
+
+先在服务器排查：
+
+```bash
+df -h
+df -i
+du -sh backups logs data /var/lib/docker 2>/dev/null
+docker system df
+```
+
+常见清理方式：
+
+```bash
+# 清理旧快照（确认不需要后再删）
+ls -1dt backups/snapshot-* | tail -n +6 | xargs -r rm -rf
+
+# 清理 Docker 构建缓存和悬空镜像
+docker builder prune -af
+docker image prune -af
+```
+
+如果你希望把快照保留得更少，例如服务器磁盘较小，可以在 `.env` 中设置：
+
+```bash
+APP_BACKUP_KEEP_COUNT=2
+APP_MIN_FREE_SPACE_MB=4096
 ```
 
 ## ⚡ 文件式 Quick PoC

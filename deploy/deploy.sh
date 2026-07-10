@@ -20,6 +20,8 @@ PREFLIGHT_SCRIPT="$SCRIPT_DIR/preflight.sh"
 COMPOSE_CMD=()
 BACKEND_LOG_DIR="${APP_BACKEND_LOG_DIR:-$PROJECT_DIR/logs/backend}"
 NGINX_LOG_DIR="${APP_NGINX_LOG_DIR:-$PROJECT_DIR/logs/nginx}"
+PRUNE_BUILD_CACHE="${DEPLOY_PRUNE_BUILD_CACHE:-true}"
+PRUNE_DANGLING_IMAGES="${DEPLOY_PRUNE_DANGLING_IMAGES:-true}"
 
 SKIP_GIT="false"
 BRANCH=""
@@ -96,6 +98,18 @@ wait_for_backend() {
     return 1
 }
 
+prune_docker_artifacts() {
+    if [ "$PRUNE_BUILD_CACHE" = "true" ]; then
+        print_info "清理 Docker build cache"
+        docker builder prune -af >/dev/null
+    fi
+
+    if [ "$PRUNE_DANGLING_IMAGES" = "true" ]; then
+        print_info "清理悬空 Docker 镜像"
+        docker image prune -f >/dev/null
+    fi
+}
+
 update_code() {
     local tracked_changes
     tracked_changes="$(git -C "$PROJECT_DIR" status --short --untracked-files=no)"
@@ -142,6 +156,7 @@ main() {
     fi
 
     mkdir -p "$BACKEND_LOG_DIR" "$NGINX_LOG_DIR"
+    prune_docker_artifacts
 
     cd "$PROJECT_DIR"
     run_compose -f "$COMPOSE_FILE" config >/dev/null
