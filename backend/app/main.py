@@ -224,10 +224,13 @@ async def _handle_poc(request: Request, name: str, sub_path: str, db: AsyncSessi
     if not meta:
         return PlainTextResponse("PoC Not Found", status_code=404)
 
-    meta.hit_count += 1
+    is_preview = request.headers.get("x-quick-poc-preview") == "1"
+
+    if not is_preview:
+        meta.hit_count += 1
     poc_req = await PocReq.from_fastapi(request, name, sub_path)
 
-    if meta.record:
+    if meta.record and not is_preview:
         log = PocAccessLog(
             poc_name=name,
             client_ip=poc_req.client_ip,

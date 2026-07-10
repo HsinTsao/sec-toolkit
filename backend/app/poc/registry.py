@@ -7,6 +7,7 @@ import logging
 from typing import Optional
 
 from .base import PocMeta, _registered_handlers
+from .file_store import get_all_file_pocs, get_file_poc
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +43,20 @@ class PocRegistry:
         logger.info(f"共注册 {len(self._pocs)} 个 PoC handler")
 
     def get(self, name: str) -> Optional[PocMeta]:
-        return self._pocs.get(name)
+        return self._pocs.get(name) or get_file_poc(name)
 
     def get_all(self) -> list[PocMeta]:
-        return list(self._pocs.values())
+        merged = dict(self._pocs)
+        for meta in get_all_file_pocs():
+            merged[meta.name] = meta
+        return list(merged.values())
 
     def get_by_category(self, category: str) -> list[PocMeta]:
-        return [p for p in self._pocs.values() if p.category == category]
+        return [p for p in self.get_all() if p.category == category]
 
     def get_categories(self) -> list[str]:
         cats: list[str] = []
-        for p in self._pocs.values():
+        for p in self.get_all():
             if p.category not in cats:
                 cats.append(p.category)
         return cats
@@ -69,13 +73,13 @@ class PocRegistry:
                 "usage": p.usage,
                 "hit_count": p.hit_count,
             }
-            for p in self._pocs.values()
+            for p in self.get_all()
         ]
 
     def to_templates(self) -> dict[str, dict]:
         """兼容旧版 POC_TEMPLATES 格式，供 OOB 模板选择器使用"""
         templates: dict[str, dict] = {}
-        for p in self._pocs.values():
+        for p in self.get_all():
             key = p.name.replace("-", "_")
             templates[key] = {
                 "name": p.name,

@@ -82,6 +82,7 @@ NGINX_BASE_IMAGE=nginx:alpine
 
 - 生产数据库默认路径：`./data/toolkit.db`
 - 上传文件默认路径：`./data/uploads/`
+- 文件式 Quick PoC 默认目录：`./data/poc-files/`
 - 自动备份目录：`./backups/`
 - 后端日志目录：`./logs/backend/`
 - Nginx 访问/错误日志目录：`./logs/nginx/`
@@ -185,6 +186,36 @@ ls logs/nginx
 # 手动做完整快照
 ./deploy/backup-db.sh
 ```
+
+## ⚡ 文件式 Quick PoC
+
+如果你只是想快速提供一个现成的 HTML / JS / TXT 响应，不想写 Python handler，可以直接把文件放进：
+
+```bash
+data/poc-files/
+```
+
+规则：
+
+- `data/poc-files/test.html` -> `GET /p/test`
+- `data/poc-files/payload.js` -> `GET /p/payload`
+- `data/poc-files/kit/index.html` -> `GET /p/kit`
+- `data/poc-files/kit/evil.js` -> `GET /p/kit/evil.js`
+
+常见用法：
+
+```bash
+mkdir -p data/poc-files
+echo '<script>alert(1)</script>' > data/poc-files/xss.html
+echo 'console.log(document.domain)' > data/poc-files/probe.js
+```
+
+然后访问：
+
+- `/p/xss`
+- `/p/probe`
+
+这类文件式 PoC 会自动出现在 Quick PoC 列表里，并且会被发布前快照一起备份。
 
 ---
 

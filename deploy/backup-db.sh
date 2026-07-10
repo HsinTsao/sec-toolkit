@@ -17,6 +17,7 @@ BACKEND_LOG_DIR="${APP_BACKEND_LOG_DIR:-$APP_HOME/logs/backend}"
 NGINX_LOG_DIR="${APP_NGINX_LOG_DIR:-$APP_HOME/logs/nginx}"
 DB_FILE="${SQLITE_DB_FILE:-$DATA_DIR/toolkit.db}"
 UPLOAD_DIR="${APP_UPLOAD_DIR:-$DATA_DIR/uploads}"
+POC_FILE_DIR="${APP_POC_FILE_DIR:-$DATA_DIR/poc-files}"
 
 mkdir -p "$DATA_DIR" "$BACKUP_DIR" "$BACKEND_LOG_DIR" "$NGINX_LOG_DIR"
 
@@ -31,6 +32,7 @@ app_home=${APP_HOME}
 data_dir=${DATA_DIR}
 db_file=${DB_FILE}
 upload_dir=${UPLOAD_DIR}
+poc_file_dir=${POC_FILE_DIR}
 backend_log_dir=${BACKEND_LOG_DIR}
 nginx_log_dir=${NGINX_LOG_DIR}
 EOF
@@ -88,6 +90,7 @@ archive_legacy_logs_if_exists() {
 write_manifest
 backup_database
 archive_dir_if_exists "$UPLOAD_DIR" "uploads.tar.gz"
+archive_dir_if_exists "$POC_FILE_DIR" "poc-files.tar.gz"
 archive_dir_if_exists "$BACKEND_LOG_DIR" "backend-logs.tar.gz"
 archive_dir_if_exists "$NGINX_LOG_DIR" "nginx-logs.tar.gz"
 archive_legacy_logs_if_exists

@@ -54,7 +54,7 @@ class PocRequest:
 @dataclass
 class PocResponse:
     """handler 返回的 HTTP 响应"""
-    body: str = ""
+    body: str | bytes = ""
     status_code: int = 200
     content_type: str = "text/html"
     headers: dict = field(default_factory=dict)

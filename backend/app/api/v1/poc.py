@@ -48,6 +48,8 @@ async def get_poc_logs(
                 "method": r.method,
                 "path": r.path,
                 "query_string": r.query_string,
+                "headers": r.headers,
+                "body": r.body,
                 "user_agent": r.user_agent,
                 "timestamp": r.timestamp.isoformat() if r.timestamp else None,
             }
