@@ -31,6 +31,34 @@ ALLOW_BOUND_PORTS="false"
 COMPOSE_CMD=()
 FAILED="false"
 
+is_current_project_pid() {
+    local pid="$1"
+    local cmd cwd
+
+    [ -n "$pid" ] || return 1
+
+    cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    if [ -n "$cmd" ] && echo "$cmd" | grep -F "$PROJECT_DIR" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [ -d "/proc/$pid" ]; then
+        cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+        if [ -n "$cwd" ] && echo "$cwd" | grep -F "$PROJECT_DIR" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    for pid_file in "$DATA_DIR"/*.pid; do
+        [ -f "$pid_file" ] || continue
+        if [ "$(cat "$pid_file" 2>/dev/null || true)" = "$pid" ]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --allow-missing-env)
@@ -167,7 +195,8 @@ check_port_owner() {
         return
     fi
 
-    local cmd
+    local pids cmd pid
+    pids="$(lsof -t -nP -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | sort -u || true)"
     cmd="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN | tail -n +2)"
     if [ "$ALLOW_BOUND_PORTS" = "true" ]; then
         print_warning "端口已占用但已允许继续: $port"
@@ -175,13 +204,16 @@ check_port_owner() {
         return
     fi
 
-    if echo "$cmd" | grep -F "$PROJECT_DIR" >/dev/null 2>&1; then
-        print_warning "端口被当前项目进程占用: $port"
-    else
-        print_error "端口被非当前项目进程占用: $port"
-        echo "$cmd"
-        FAILED="true"
-    fi
+    for pid in $pids; do
+        if ! is_current_project_pid "$pid"; then
+            print_error "端口被非当前项目进程占用: $port"
+            echo "$cmd"
+            FAILED="true"
+            return
+        fi
+    done
+
+    print_warning "端口被当前项目进程占用: $port"
 }
 
 main() {

@@ -41,6 +41,34 @@ API_PORT="${APP_API_PORT:-8000}"
 HTTP_PORT="${APP_HTTP_PORT:-80}"
 COMPOSE_CMD=()
 
+is_current_project_pid() {
+    local pid="$1"
+    local cmd cwd
+
+    [ -n "$pid" ] || return 1
+
+    cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    if [ -n "$cmd" ] && echo "$cmd" | grep -F "$APP_HOME" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [ -d "/proc/$pid" ]; then
+        cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+        if [ -n "$cwd" ] && echo "$cwd" | grep -F "$APP_HOME" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+
+    for pid_file in "$DATA_DIR"/*.pid; do
+        [ -f "$pid_file" ] || continue
+        if [ "$(cat "$pid_file" 2>/dev/null || true)" = "$pid" ]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 require_command() {
     command -v "$1" >/dev/null 2>&1 || {
         print_error "$1 未安装"
@@ -61,7 +89,7 @@ detect_compose_cmd() {
 
 run_preflight() {
     [ -x "$PREFLIGHT_SCRIPT" ] || return 0
-    "$PREFLIGHT_SCRIPT" --allow-missing-env --allow-legacy-dev
+    "$PREFLIGHT_SCRIPT" --allow-missing-env --allow-legacy-dev --allow-bound-ports
 }
 
 run_compose() {
@@ -173,13 +201,10 @@ assert_no_unexpected_port_owners() {
     for port in "${ports[@]}"; do
         while read -r pid; do
             [ -n "$pid" ] || continue
+            if is_current_project_pid "$pid"; then
+                continue
+            fi
             cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-            if [ -z "$cmd" ]; then
-                continue
-            fi
-            if echo "$cmd" | grep -F "$APP_HOME" >/dev/null 2>&1; then
-                continue
-            fi
             print_error "端口 $port 被非当前项目进程占用，停止切换"
             echo "$cmd"
             exit 1
