@@ -60,6 +60,16 @@ cd security-toolkit
 ./deploy/deploy.sh
 ```
 
+如果服务器拉不到 Docker Hub 基础镜像，可以先在 `.env` 中覆盖基础镜像地址，再重新执行安装或发布：
+
+```bash
+PYTHON_BASE_IMAGE=python:3.11-slim
+NODE_BASE_IMAGE=node:20-alpine
+NGINX_BASE_IMAGE=nginx:alpine
+```
+
+把它们替换成你的服务器实际可访问的镜像地址，例如公司私有镜像仓库或镜像代理。
+
 默认发布流程：
 
 - `git fetch` + `git pull --ff-only`

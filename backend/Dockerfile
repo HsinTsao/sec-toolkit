@@ -1,5 +1,6 @@
 # Python 后端 Dockerfile
-FROM python:3.11-slim
+ARG PYTHON_BASE_IMAGE=python:3.11-slim
+FROM ${PYTHON_BASE_IMAGE}
 
 WORKDIR /app
 

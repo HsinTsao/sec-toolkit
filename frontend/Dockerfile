@@ -1,5 +1,6 @@
 # 构建阶段
-FROM node:20-alpine AS builder
+ARG NODE_BASE_IMAGE=node:20-alpine
+FROM ${NODE_BASE_IMAGE} AS builder
 
 WORKDIR /app
 
@@ -16,7 +17,8 @@ COPY . .
 RUN npm run build
 
 # 生产阶段 - 使用 nginx 服务静态文件
-FROM nginx:alpine
+ARG NGINX_BASE_IMAGE=nginx:alpine
+FROM ${NGINX_BASE_IMAGE}
 
 # 安装 curl 用于健康检查
 RUN apk add --no-cache curl
