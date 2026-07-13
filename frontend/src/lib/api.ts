@@ -623,6 +623,8 @@ export const pocApi = {
     api.get('/poc/list'),
   templates: () =>
     api.get('/poc/templates'),
+  preview: (name: string) =>
+    api.get(`/poc/${name}/preview`),
   getLogs: (name: string, limit?: number) =>
     api.get(`/poc/${name}/logs`, { params: { limit } }),
 }

@@ -40,6 +40,14 @@ interface PocLogItem {
   timestamp: string | null
 }
 
+interface PocPreviewResponse {
+  name: string
+  content_type: string
+  status_code: number
+  redirect_url: string | null
+  body: string
+}
+
 const CATEGORY_LABELS: Record<string, string> = {
   xss: 'XSS',
   xxe: 'XXE',
@@ -58,6 +66,7 @@ export default function QuickPoc() {
   const [selectedPoc, setSelectedPoc] = useState<PocItem | null>(null)
   const [copiedName, setCopiedName] = useState<string | null>(null)
   const [previewContent, setPreviewContent] = useState<string | null>(null)
+  const [previewMeta, setPreviewMeta] = useState<PocPreviewResponse | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [logs, setLogs] = useState<PocLogItem[]>([])
   const [logsLoading, setLogsLoading] = useState(false)
@@ -113,12 +122,13 @@ export default function QuickPoc() {
   const loadPreview = async (name: string) => {
     setPreviewLoading(true)
     try {
-      const resp = await fetch(getPocUrl(name), {
-        headers: { 'X-Quick-Poc-Preview': '1' },
-      })
-      const text = await resp.text()
-      setPreviewContent(text)
-    } catch { setPreviewContent('Preview failed') }
+      const { data } = await pocApi.preview(name)
+      setPreviewMeta(data)
+      setPreviewContent(data.body || '')
+    } catch {
+      setPreviewMeta(null)
+      setPreviewContent('Preview failed')
+    }
     finally { setPreviewLoading(false) }
   }
 
@@ -156,6 +166,7 @@ export default function QuickPoc() {
       loadPreview(selectedPoc.name)
       loadLogs(selectedPoc.name)
     } else {
+      setPreviewMeta(null)
       setPreviewContent(null)
       setLogs([])
     }
@@ -293,7 +304,15 @@ export default function QuickPoc() {
               <div className="grid h-full min-h-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
                 <section className="min-h-0 rounded-lg border border-theme-border bg-theme-card p-4 flex flex-col overflow-hidden">
                   <div className="mb-3 flex items-center justify-between gap-3">
-                    <h4 className="text-sm font-medium text-theme-muted">Response Preview</h4>
+                    <div>
+                      <h4 className="text-sm font-medium text-theme-muted">Response Preview</h4>
+                      {previewMeta && (
+                        <p className="mt-1 text-xs text-theme-muted">
+                          {previewMeta.status_code} · {previewMeta.content_type}
+                          {previewMeta.redirect_url ? ` · redirect ${previewMeta.redirect_url}` : ''}
+                        </p>
+                      )}
+                    </div>
                     <button
                       onClick={() => selectedPoc && loadPreview(selectedPoc.name)}
                       className="p-1.5 rounded-lg hover:bg-theme-bg text-theme-muted hover:text-theme-primary transition-colors"
