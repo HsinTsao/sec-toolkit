@@ -10,14 +10,36 @@ Drop files under data/poc-files/ and they become live routes:
 from __future__ import annotations
 
 import mimetypes
+import os
 from pathlib import Path
 from typing import Optional
 
 from .base import PocMeta, PocRequest, PocResponse
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-POC_FILE_DIR = PROJECT_ROOT / "data" / "poc-files"
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = BACKEND_ROOT.parent if BACKEND_ROOT.name == "backend" else BACKEND_ROOT
+
+
+def _default_data_dir() -> Path:
+    configured = os.getenv("APP_DATA_DIR")
+    if configured:
+        return Path(configured)
+
+    if Path("/app/data").exists():
+        return Path("/app/data")
+
+    return PROJECT_ROOT / "data"
+
+
+def _poc_file_dir() -> Path:
+    configured = os.getenv("APP_POC_FILE_DIR")
+    if configured:
+        return Path(configured)
+    return _default_data_dir() / "poc-files"
+
+
+POC_FILE_DIR = _poc_file_dir().resolve()
 
 SUPPORTED_SUFFIXES = {
     ".html",
@@ -100,6 +122,15 @@ def _read_file_response(path: Path) -> PocResponse:
     return PocResponse(body=body, content_type=content_type)
 
 
+def _display_path(path: Path) -> str:
+    for base in (PROJECT_ROOT, POC_FILE_DIR.parent):
+        try:
+            return str(path.relative_to(base))
+        except ValueError:
+            continue
+    return str(path)
+
+
 def _build_handler(route_name: str, entry_path: Path):
     async def _handler(req: PocRequest) -> PocResponse:
         if entry_path.is_file():
@@ -131,7 +162,7 @@ def _build_meta(route_name: str, entry_path: Path, existing: Optional[PocMeta]) 
 
     return PocMeta(
         name=route_name,
-        description=f"File response from {entry_path.relative_to(PROJECT_ROOT)}",
+        description=f"File response from {_display_path(entry_path)}",
         category="custom",
         content_type=_guess_content_type(sample_path) if sample_path.is_file() else "text/plain",
         record=True,
