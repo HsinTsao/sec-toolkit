@@ -22,6 +22,7 @@ BACKEND_LOG_DIR="${APP_BACKEND_LOG_DIR:-$PROJECT_DIR/logs/backend}"
 NGINX_LOG_DIR="${APP_NGINX_LOG_DIR:-$PROJECT_DIR/logs/nginx}"
 PRUNE_BUILD_CACHE="${DEPLOY_PRUNE_BUILD_CACHE:-false}"
 PRUNE_DANGLING_IMAGES="${DEPLOY_PRUNE_DANGLING_IMAGES:-true}"
+SKIP_BACKUP="${DEPLOY_SKIP_BACKUP:-false}"
 
 SKIP_GIT="false"
 BRANCH=""
@@ -35,6 +36,10 @@ while [ $# -gt 0 ]; do
         --branch)
             BRANCH="${2:-}"
             shift 2
+            ;;
+        --skip-backup)
+            SKIP_BACKUP="true"
+            shift
             ;;
         *)
             print_error "未知参数: $1"
@@ -151,7 +156,9 @@ main() {
 
     ensure_no_legacy_dev_processes
 
-    if [ -x "$BACKUP_SCRIPT" ]; then
+    if [ "$SKIP_BACKUP" = "true" ]; then
+        print_info "跳过发布前备份"
+    elif [ -x "$BACKUP_SCRIPT" ]; then
         "$BACKUP_SCRIPT"
     fi
 

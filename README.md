@@ -79,6 +79,12 @@ NGINX_BASE_IMAGE=nginx:alpine
 - 运行 `python scripts/migrate_db.py`
 - `docker compose up -d`
 
+如果你刚手动执行过 `./deploy/backup-db.sh`，或者当前只是一次低风险配置发布，也可以跳过发布前自动备份：
+
+```bash
+./deploy/deploy.sh --skip-backup
+```
+
 #### 数据库和数据目录
 
 - 生产数据库默认路径：`./data/toolkit.db`
@@ -109,6 +115,18 @@ DEPLOY_PRUNE_BUILD_CACHE=false
 
 - Python / Node 依赖下载走国内镜像
 - 不再每次发布都清空 Docker build cache
+
+如果发布输出停在：
+
+```bash
+[INFO] 备份空间检查通过: ...
+```
+
+随后长时间没有下一行，通常是在做 SQLite 全量快照。现在脚本会打印数据库备份进度；如果你已经有刚做过的快照，可以直接：
+
+```bash
+./deploy/deploy.sh --skip-backup
+```
 
 #### 访问地址
 

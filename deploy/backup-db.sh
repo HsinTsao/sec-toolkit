@@ -72,6 +72,10 @@ for unit in units:
 PY
 }
 
+print_info() {
+    echo "[INFO] $1"
+}
+
 prune_old_snapshots() {
     local keep_count="$BACKUP_KEEP_COUNT"
     local keep_existing
@@ -145,7 +149,7 @@ check_free_space() {
         exit 1
     fi
 
-    echo "[INFO] 备份空间检查通过: need=$(format_bytes "$required"), free=$(format_bytes "$available")"
+    print_info "备份空间检查通过: need=$(format_bytes "$required"), free=$(format_bytes "$available")"
 }
 
 write_manifest() {
@@ -163,10 +167,11 @@ EOF
 
 backup_database() {
     if [ ! -f "$DB_FILE" ]; then
-        echo "[INFO] 未找到数据库文件，跳过数据库备份: $DB_FILE"
+        print_info "未找到数据库文件，跳过数据库备份: $DB_FILE"
         return
     fi
 
+    print_info "开始备份数据库: $DB_FILE (size=$(format_bytes "$(bytes_for_file "$DB_FILE")"))"
     python3 - "$DB_FILE" "$SNAPSHOT_DIR/toolkit.db" <<'PY'
 import sqlite3
 import sys
@@ -175,11 +180,23 @@ from pathlib import Path
 source_path, backup_path = sys.argv[1], sys.argv[2]
 source_conn = None
 backup_conn = None
+last_report = -1
+
+def report(status, remaining, total):
+    global last_report
+    if total <= 0:
+        return
+    percent = int((total - remaining) * 100 / total)
+    if percent >= 100:
+        percent = 100
+    if percent >= last_report + 10 or percent == 100:
+        last_report = percent
+        print(f"[INFO] 数据库备份进度: {percent}% ({total - remaining}/{total} pages)", flush=True)
 
 try:
     source_conn = sqlite3.connect(source_path)
     backup_conn = sqlite3.connect(backup_path)
-    source_conn.backup(backup_conn)
+    source_conn.backup(backup_conn, pages=2048, progress=report, sleep=0.0)
 except sqlite3.OperationalError as exc:
     msg = str(exc).lower()
     if "database or disk is full" in msg:
@@ -194,7 +211,7 @@ finally:
     if source_conn is not None:
         source_conn.close()
 PY
-    echo "[INFO] 数据库已备份到: $SNAPSHOT_DIR/toolkit.db"
+    print_info "数据库已备份到: $SNAPSHOT_DIR/toolkit.db"
 }
 
 archive_dir_if_exists() {
@@ -209,8 +226,9 @@ archive_dir_if_exists() {
         return
     fi
 
+    print_info "开始归档目录: $source_dir"
     tar -czf "$SNAPSHOT_DIR/$archive_name" -C "$(dirname "$source_dir")" "$(basename "$source_dir")"
-    echo "[INFO] 已归档: $SNAPSHOT_DIR/$archive_name"
+    print_info "已归档: $SNAPSHOT_DIR/$archive_name"
 }
 
 archive_legacy_logs_if_exists() {
@@ -223,7 +241,7 @@ archive_legacy_logs_if_exists() {
     [ "${#legacy_logs[@]}" -gt 0 ] || return
 
     tar -czf "$SNAPSHOT_DIR/legacy-data-logs.tar.gz" -C "$DATA_DIR" "${legacy_logs[@]}"
-    echo "[INFO] 已归档旧日志: $SNAPSHOT_DIR/legacy-data-logs.tar.gz"
+    print_info "已归档旧日志: $SNAPSHOT_DIR/legacy-data-logs.tar.gz"
 }
 
 prune_old_snapshots
@@ -237,4 +255,4 @@ archive_dir_if_exists "$BACKEND_LOG_DIR" "backend-logs.tar.gz"
 archive_dir_if_exists "$NGINX_LOG_DIR" "nginx-logs.tar.gz"
 archive_legacy_logs_if_exists
 
-echo "[INFO] 备份快照完成: $SNAPSHOT_DIR"
+print_info "备份快照完成: $SNAPSHOT_DIR"
